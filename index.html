@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Mi Bot Educativo</title>
+  <style>
+    body { font-family: Arial; margin: 50px; background: #f4f4f4; }
+    #container { background: #fff; padding: 20px; border-radius: 8px; max-width: 600px; margin: auto; }
+    #response { margin-top: 20px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h2>Pregunta al bot</h2>
+    <input type="text" id="question" style="width:100%;" placeholder="Escribe tu pregunta...">
+    <button onclick="askBot()">Preguntar</button>
+    <div id="response"></div>
+  </div>
+
+  <script>
+    async function askBot() {
+      const q = document.getElementById("question").value;
+      const res = await fetch("/preguntar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q })
+      });
+      const data = await res.json();
+      document.getElementById("response").innerText = data.answer || "Error en la respuesta.";
+    }
+  </script>
+</body>
+</html>
