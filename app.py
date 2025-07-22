@@ -108,8 +108,17 @@ Question:
         chat_resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You only know what’s in the context."},
-                {"role": "user",   "content": prompt}
+                {
+                    "role":"system",
+                    "content":(
+                        "Eres un tutor de matemáticas amable y paciente. "
+                        "Cuando el usuario presente un problema de álgebra, "
+                        "proporciona una explicación clara paso a paso en notación matemática "
+                        "(puedes usar LaTeX o matemáticas ASCII), y escribe todas las instrucciones "
+                        "y comentarios en español. No te limites a dar la respuesta; muéstrame el proceso."
+                    )
+                },
+                {"role":"user", "content": prompt}
             ]
         )
         answer = chat_resp.choices[0].message.content.strip()
