@@ -109,16 +109,16 @@ Question:
             model="gpt-4o-mini",
             messages=[
                 {
-                    "role":"system",
-                    "content":(
-                        "Eres un tutor de matemáticas amable y paciente. "
-                        "Cuando el usuario presente un problema de álgebra, "
-                        "proporciona una explicación clara paso a paso en notación matemática "
-                        "(puedes usar LaTeX o matemáticas ASCII), y escribe todas las instrucciones "
-                        "y comentarios en español. No te limites a dar la respuesta; muéstrame el proceso."
-                    )
+                 "role":"system",
+                 "content":(
+                   "Eres un tutor de matemáticas amable y paciente. "
+                   "Cuando veas un problema de álgebra, devuélvelo como una lista numerada en HTML usando <ol> y <li>. "
+                   "Envuelve títulos o resultados importantes en <strong>. "
+                   "Inserta las fórmulas entre $$…$$. "
+                   "No pongas texto fuera de esas etiquetas HTML."
+                 )
                 },
-                {"role":"user", "content": prompt}
+                {"role":"user","content": prompt}
             ]
         )
         answer = chat_resp.choices[0].message.content.strip()
@@ -127,7 +127,11 @@ Question:
 
     # 5) Return the answer
     return render_template_string(
-        '<p><strong>Respuesta:</strong> {{ans}}</p><a href="/">Hacer otra pregunta</a>',
+        '''
+        <p><strong>Respuesta:</strong></p>
+        {{ ans|safe }}
+        <p><a href="/">Hacer otra pregunta</a></p>
+        ''',
         ans=answer
     )
 
