@@ -109,16 +109,28 @@ Question:
             model="gpt-4o-mini",
             messages=[
                 {
-                 "role":"system",
-                 "content":(
-                   "Eres un tutor de matemáticas amable y paciente. "
-                   "Cuando veas un problema de álgebra, devuélvelo como una lista numerada en HTML usando <ol> y <li>. "
-                   "Envuelve títulos o resultados importantes en <strong>. "
-                   "Inserta las fórmulas entre $$…$$. "
-                   "No pongas texto fuera de esas etiquetas HTML."
-                 )
+                  "role":"system",
+                  "content":(
+                    "Eres un tutor de matemáticas muy paciente. "
+                    "Cuando veas un problema de álgebra, devuelve una explicación paso a paso "
+                    "con al menos 4 pasos, usando notación matemática en LaTeX o ASCII, "
+                    "y formatea la salida en HTML como una lista ordenada (<ol><li>…). "
+                    "Envuelve los resultados importantes en <strong>…</strong>. "
+                    "No añadas texto fuera de las etiquetas HTML."
+                  )
                 },
-                {"role":"user","content": prompt}
+                {
+                  "role":"user",
+                  "content":(
+                    "Resuelve la siguiente expresión paso a paso y formatea en HTML:\n\n"
+                    f"{question}\n\n"
+                    "Recuerda incluir al menos:\n"
+                    "1. Expresión inicial.\n"
+                    "2. Expansión del binomio (si aplica).\n"
+                    "3. Completar el cuadrado (si aplica).\n"
+                    "4. Simplificar y dar el resultado final.\n"
+                  )
+                }
             ]
         )
         answer = chat_resp.choices[0].message.content.strip()
