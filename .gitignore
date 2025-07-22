@@ -1,0 +1,13 @@
+# Ignore environment files
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual envs
+.venv/
+venv/
+
+# MacOS cruft (if you ever use mac)
+.DS_Store
