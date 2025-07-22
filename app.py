@@ -83,7 +83,8 @@ def preguntar():
     # 2) Query Pinecone for top-K
     try:
         pine_resp = index.query(vector=vector, top_k=5, include_metadata=True)
-        snippets  = [m.metadata.get("text") for m in pine_resp.matches if m.metadata.get("text")]
+        snippets = [m.metadata.get("text", m.metadata.get("answer")) for m in pine_resp.matches if m.metadata.get("text") or m.metadata.get("answer")
+]
     except Exception as e:
         return jsonify({"error": f"Pinecone error: {e}"}), 500
 
