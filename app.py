@@ -25,7 +25,7 @@ HTML = '''<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Asesor Bebé Chat</title>
+  <title>Asesore Qualificato</title>
   <style>
     body            { max-width:720px; margin:2rem auto; font:18px/1.4 sans-serif; }
     h1              { text-align:center; margin-bottom:1.2rem; }
@@ -43,7 +43,7 @@ HTML = '''<!doctype html>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
 </head>
 <body>
-  <h1>Asesor Bebé: tu tutor de matemáticas 🤌</h1>
+  <h1>Asesore Qualificato: tu tutore matemático 🤌</h1>
   <form id="qform">
     <input type="text" name="pregunta" placeholder="Escribe tu problema aquí" required>
     <label>— o sube una imagen:</label>
