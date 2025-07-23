@@ -27,15 +27,16 @@ HTML = '''<!doctype html>
   <meta charset="utf-8">
   <title>Asesore Qualificato</title>
   <style>
-    body            { max-width:720px; margin:2rem auto; font:18px/1.4 sans-serif; color:#222; }
-    h1              { text-align:center; margin-bottom:1.2rem; }
-    form            { display:flex; flex-direction:column; gap:1rem; }
-    input, button   { font-size:1rem; padding:0.6rem; }
-    button          { background:#1450b4; color:#fff; border:none; border-radius:4px; cursor:pointer; }
-    button:hover    { background:#0e3c86; }
-    #loader         { margin-top:1rem; font-style:italic; display:none; }
-    .answer         { margin-top:1.5rem; padding:1rem; background:#f9f9f9; border-left:4px solid #1450b4; }
-    footer          { margin-top:2rem; text-align:center; color:#666; font-size:0.9rem; }
+    body{max-width:720px;margin:2rem auto;font:18px/1.4 sans-serif;color:#222;}
+    h1{text-align:center;margin-bottom:1.2rem;}
+    form{display:flex;flex-direction:column;gap:1rem;}
+    input,button{font-size:1rem;padding:0.6rem;}
+    button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
+    button:hover{background:#0e3c86;}
+    #loader{margin-top:1rem;font-style:italic;display:none;}
+    .answer{margin-top:1.5rem;padding:1rem;background:#f9f9f9;
+            border-left:4px solid #1450b4;}
+    footer{margin-top:2rem;text-align:center;color:#666;font-size:0.9rem;}
   </style>
   <script>
     window.MathJax={tex:{inlineMath:[['\\\\(','\\\\)']]},svg:{fontCache:'global'}};
@@ -50,28 +51,43 @@ HTML = '''<!doctype html>
     <input type="file" name="image">
     <button type="submit">Enviar</button>
   </form>
+
   <div id="loader">⌛ Creando la mejor respuesta</div>
   <div class="answer" id="answer"></div>
+
   <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
+
   <script>
-    const form = document.getElementById('qform'),
+    const form   = document.getElementById('qform'),
           loader = document.getElementById('loader'),
           ansDiv = document.getElementById('answer');
-    form.addEventListener('submit', async e=>{
+
+    form.addEventListener('submit', async e => {
       e.preventDefault();
-      ansDiv.innerHTML='';
-      loader.style.display='block';
-      let dots=0, max=3;
-      const iv=setInterval(()=>{
-        dots=(dots+1)%(max+1);
-        loader.textContent='⌛ Creando la mejor respuesta'+'.'.repeat(dots);
-      },500);
-      const resp=await fetch('/preguntar',{method:'POST',body:new FormData(form)});
+      ansDiv.innerHTML = '';
+      loader.style.display = 'block';
+
+      let dots = 0, max = 3;
+      const iv = setInterval(() => {
+        dots = (dots + 1) % (max + 1);
+        loader.textContent = '⌛ Creando la mejor respuesta' + '.'.repeat(dots);
+      }, 500);
+
+      const resp = await fetch('/preguntar', {
+        method: 'POST',
+        body: new FormData(form)
+      });
+
       clearInterval(iv);
-      loader.style.display='none';
-      const body=await resp.text();
-      if(!resp.ok) ansDiv.textContent=body;
-      else{ ansDiv.innerHTML=body; MathJax.typeset(); }
+      loader.style.display = 'none';
+
+      const body = await resp.text();
+      if (!resp.ok) {
+        ansDiv.textContent = body;
+      } else {
+        ansDiv.innerHTML = body;   // <-- only the <ol>…</ol> goes here
+        MathJax.typeset();
+      }
     });
   </script>
 </body>
@@ -90,13 +106,13 @@ def preguntar():
     if not (question or image_file):
         return "Proporciona texto o sube una imagen.", 400
 
-    # 4a) Embed texto o imagen
+    # 4a) Crear embedding (texto o imagen)
     try:
         if image_file:
-            img = image_file.read()
+            img_bytes = image_file.read()
             emb = client.embeddings.create(
                 model="image-embedding-001",
-                input=base64.b64encode(img).decode()
+                input=base64.b64encode(img_bytes).decode()
             )
         else:
             emb = client.embeddings.create(
@@ -118,14 +134,14 @@ def preguntar():
     except Exception:
         snippets = []
 
-    # 4c) Fallback random Wiki si Pinecone está vacío
+    # 4c) Fallback random Wiki si Pinecone vacío
     if not snippets:
         try:
             wiki = requests.get(
                 "https://es.wikipedia.org/api/rest_v1/page/random/summary",
                 timeout=5
             ).json()
-            fact = wiki.get("extract","Lo siento, nada aleatorio.")
+            fact = wiki.get("extract", "Lo siento, nada aleatorio.")
             snippets = [fact]
         except:
             return "No hay datos en Pinecone y falló la búsqueda aleatoria.", 500
@@ -133,11 +149,11 @@ def preguntar():
     # 4d) Raw steps desde Pinecone
     raw_steps = snippets
 
-    # 4e) Solo formateo con OpenAI
+    # 4e) Solo formateo con OpenAI (HTML <ol>)
     format_msg = (
         "Eres un formateador HTML muy estricto. "
-        "Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) "
-        "en español, sin texto adicional:\n\n"
+        "Toma estas frases y devuélvelas como una lista ordenada "
+        "(<ol><li>…</li></ol>) en español, sin texto adicional:\n\n"
         + "\n".join(f"- {s}" for s in raw_steps)
     )
     try:
@@ -145,16 +161,16 @@ def preguntar():
             model="gpt-4o-mini",
             messages=[
                 {"role":"system","content":format_msg},
-                {"role":"user","content":"Por favor formatea la lista."}
+                {"role":"user",  "content":"Por favor formatea la lista."}
             ]
         )
         answer = chat.choices[0].message.content.strip() + " 🤌"
     except Exception as e:
         return f"Error de formateo: {e}", 500
 
-    # 4f) Devuelve solo el fragmento HTML
-    return render_template_string('{{ ans|safe }}', ans=answer)
+    # 4f) **Devuelve solo el <ol>…</ol> + emoji**, no la página entera
+    return answer
 
 # ─── 5) Ejecuta servidor ──────────────────────────────────────────────────
-if __name__=='__main__':
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv('PORT','8000')))
