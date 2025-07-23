@@ -21,19 +21,9 @@ app = Flask(__name__)
 # ─── 2) Prompt‐plantilla genérico de 5 pasos para álgebra ────────────────
 SYSTEM_TEMPLATE = """
 Eres un tutor de matemáticas muy paciente y claro.
-Cuando el usuario haga una pregunta de álgebra (por ejemplo, desarrollar una expresión,
-completar cuadrados o resolver igual a cero, etc.), **responde siempre con
-EXACTAMENTE** estas cinco líneas numeradas en español, usando notación LaTeX entre
+Cuando el usuario haga una pregunta de matemáticas (por ejemplo, desarrollar una expresión,
+completar cuadrados, resolver igual a cero, etc.), **responde siempre con las líneas necesarias para explicar detalladamente el procedimiento de la respuesta, numeradas en español, usando notación LaTeX entre
 \\( … \\) para todas las fórmulas, sin texto adicional:
-
-1. Expresión inicial: \\({EXPR}\\)
-2. Expandimos el binomio: \\( … \\)
-3. Reemplazamos en la expresión: \\( … \\)
-4. Simplificamos y obtenemos: \\( … \\) que es nuestra expresión final en forma simplificada.
-5. Resultado final: …
-
-Donde `{EXPR}` se sustituye automáticamente por la expresión que el usuario escribió.
-"""
 
 # ─── 3) HTML con estilo y MathJax ─────────────────────────────────────────
 HTML = '''
@@ -128,26 +118,29 @@ def preguntar():
         snippets = []
 
     # ── 4d) Construir prompt dinámico y llamar al chat ───────────────────
-    system_msg = SYSTEM_TEMPLATE.replace("{EXPR}", question or "…")
+    system_msg = SYSTEM_TEMPLATE  # as defined above
+    
     try:
         chat_resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user",   "content": question}
+                {"role":"system", "content": system_msg},
+                {"role":"user",   "content": question}
             ]
         )
-        # 1) Get the plain answer
         answer = chat_resp.choices[0].message.content.strip()
-
-        # 2) Add the 🤌 emoji at the very end
-        answer = answer.rstrip() + " 🤌"
-      
+        # tack on the 🤌 if you like:
+        answer = answer + " 🤌"
     except Exception as e:
         return jsonify({"error": f"Error de chat: {e}"}), 500
-
-    # ── 4e) Devolver HTML con la respuesta (se renderiza MathJax) ────────
-    return render_template_string(HTML, ans=answer)
+    
+    return render_template_string(
+        '''
+        {{ ans|safe }}
+        <p><a href="/">Hacer otra pregunta</a></p>
+        ''',
+        ans=answer
+    )
 
 # ─── 5) Lanzar servidor ───────────────────────────────────────────────────
 if __name__ == '__main__':
