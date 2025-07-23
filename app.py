@@ -75,8 +75,6 @@ HTML = '''
     <input type="text" name="pregunta" placeholder="Escribe tu problema aquí">
     <label>— o sube una imagen:</label>
     <input type="file" name="image">
-    <label>— o pega una URL de imagen:</label>
-    <input type="text" name="image_url" placeholder="https://…">
     <button type="submit">Enviar</button>
   </form>
 
