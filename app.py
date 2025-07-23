@@ -137,8 +137,12 @@ def preguntar():
                 {"role": "user",   "content": question}
             ]
         )
-        # ─── Add the 🤌 at the very end ───────────────────────────────────
+        # 1) Get the plain answer
+        answer = chat_resp.choices[0].message.content.strip()
+
+        # 2) Add the 🤌 emoji at the very end
         answer = answer.rstrip() + " 🤌"
+      
     except Exception as e:
         return jsonify({"error": f"Error de chat: {e}"}), 500
 
