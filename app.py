@@ -64,7 +64,7 @@ HTML = '''
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
 </head>
 <body>
-  <h1>Asesor Bebé: tu tutor de matemáticas 🤌</h1>
+  <h1>El Asesore Qualificato: tu tutore de matemáticas 🤌</h1>
   <form id="qform">
     <input type="text" name="pregunta" placeholder="Escribe tu problema aquí" required>
     <label>— o sube una imagen:</label>
