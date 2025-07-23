@@ -20,42 +20,18 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = Flask(__name__)
 
-# ─── 2) Prompt‐plantilla genérico de 5 pasos para matemáticas ────────────
-SYSTEM_TEMPLATE = """
-Eres un tutor de matemáticas experto y muy paciente.
-Cuando el usuario haga cualquier pregunta de matemáticas (simplificar una expresión,
-resolver una ecuación, traducir un enunciado en palabras a álgebra, etc.):
-
-1. Expresión inicial: \\({EXPR}\\)
-2. Identifica el tipo de problema y aplica el método adecuado:
-   – Si no hay “=”: simplifica paso a paso.
-   – Si hay “=“: aísla la incógnita y despeja.
-   – Si es un enunciado en palabras: traduce primero a álgebra y luego procede.
-3. Usa notación LaTeX entre \\( … \\) para todas las fórmulas.
-4. Presenta **al menos 4 pasos** numerados como lista HTML:
-   <ol>
-     <li>…primer paso…</li>
-     <li>…</li>
-     <li>…</li>
-     <li>…</li>
-   </ol>
-5. Resultado final: \\(…\\)
-
-No añadas nada fuera de esas etiquetas HTML, ni repitas la pregunta.
-"""
-
-# ─── 3) HTML con estilo y loader JS ────────────────────────────────────────
+# ─── 2) HTML con estilo y loader JS ───────────────────────────────────────
 HTML = '''<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <title>Asesor Bebé Chat</title>
   <style>
-    body      { max-width:720px; margin:2rem auto; font:18px/1.4 sans-serif; }
+    body      { max-width:720px; margin:2rem auto; font:18px/1.4 sans-serif; color:#222; }
     h1        { font-size:1.8rem; text-align:center; margin-bottom:1.2rem; }
     form      { display:flex; flex-direction:column; gap:1rem; }
     input, button { font-size:1rem; padding:0.6rem; }
-    button    { background:#1450b4; color:#fff; border:none; border-radius:4px; }
+    button    { background:#1450b4; color:#fff; border:none; border-radius:4px; cursor:pointer; }
     button:hover { background:#0e3c86; }
     #loader   { margin-top:1rem; font-style:italic; display:none; }
     .answer   { margin-top:1.5rem; padding:1rem; background:#f9f9f9; border-left:4px solid #1450b4; }
@@ -110,11 +86,12 @@ HTML = '''<!doctype html>
 </body>
 </html>'''
 
-# ─── 4) Rutas Flask ───────────────────────────────────────────────────────
+# ─── 3) Ruta de inicio ────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def home():
     return render_template_string(HTML)
 
+# ─── 4) Manejo de la pregunta ─────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
     question   = (request.form.get('pregunta') or "").strip()
@@ -122,23 +99,24 @@ def preguntar():
     if not (question or image_file):
         return jsonify(error="Proporciona texto o sube una imagen."), 400
 
+    # 4a) Crear embedding
     try:
         if image_file:
-            img = image_file.read()
-            emb = client.embeddings.create(
+            img_bytes = image_file.read()
+            emb_resp  = client.embeddings.create(
                 model="image-embedding-001",
-                input=base64.b64encode(img).decode()
+                input=base64.b64encode(img_bytes).decode()
             )
         else:
-            emb = client.embeddings.create(
+            emb_resp  = client.embeddings.create(
                 model="text-embedding-3-small",
                 input=question
             )
-        vector = emb.data[0].embedding
+        vector = emb_resp.data[0].embedding
     except Exception as e:
         return jsonify(error=f"Error de embedding: {e}"), 500
 
-    # (Opcional) Pinecone snippet lookup...
+    # 4b) Consultar Pinecone
     try:
         pine = index.query(vector=vector, top_k=5, include_metadata=True)
         snippets = [
@@ -146,23 +124,53 @@ def preguntar():
             for m in pine.matches
             if m.metadata.get("text") or m.metadata.get("answer")
         ]
-    except:
+    except Exception:
         snippets = []
 
-    system_msg = SYSTEM_TEMPLATE.replace("{EXPR}", question)
+    # 4c) Si Pinecone vació, búsqueda random en Wikipedia
+    if not snippets:
+        try:
+            wiki = requests.get(
+                "https://es.wikipedia.org/api/rest_v1/page/random/summary",
+                timeout=5
+            )
+            wiki.raise_for_status()
+            data = wiki.json()
+            fact = data.get("extract", "Lo siento, no encontré nada aleatorio.")
+            snippets = [fact]
+        except Exception:
+            return jsonify(error="No hay datos en Pinecone y falló la búsqueda aleatoria."), 500
+
+    # 4d) Preparar contexto
+    context = "\n".join(f"- {s}" for s in snippets)
+    rag_prompt = f"""Usa **solo** la información en la lista a continuación para responder.
+No agregues nada que no esté aquí.
+
+Contexto:
+{context}
+
+Pregunta:
+{question}
+"""
+
+    # 4e) Llamar al LLM con RAG estricto
+    system_msg = (
+        "Eres un asistente que solo sabe lo que está en el contexto. "
+        "Si la respuesta está ahí, úsala; si no, di que no puedo responder."
+    )
     try:
         chat = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role":"system","content":system_msg},
-                {"role":"user","content":question}
+                {"role":"system", "content": system_msg},
+                {"role":"user",   "content": rag_prompt}
             ]
         )
         answer = chat.choices[0].message.content.strip() + " 🤌"
     except Exception as e:
         return jsonify(error=f"Error de chat: {e}"), 500
 
-    # sólo devolvemos el HTML del answer div
+    # 4f) Devolver solo el HTML del answer div
     return render_template_string('{{ ans|safe }}', ans=answer)
 
 # ─── 5) Ejecuta servidor ──────────────────────────────────────────────────
