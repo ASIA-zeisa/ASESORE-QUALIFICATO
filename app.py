@@ -67,8 +67,8 @@ HTML = '''<!doctype html>
       ansDiv.innerHTML = '';
       loader.style.display = 'block';
       let dots = 0, max = 3;
-      const iv = setInterval(()=>{
-        dots = (dots + 1) % (max+1);
+      const iv = setInterval(() => {
+        dots = (dots + 1) % (max + 1);
         loader.textContent = '⌛ Creando la mejor respuesta' + '.'.repeat(dots);
       }, 500);
 
@@ -141,7 +141,7 @@ def preguntar():
         except Exception:
             return jsonify(error="No hay datos en Pinecone y falló la búsqueda aleatoria."), 500
 
-    # 4d) Preparar contexto
+    # 4d) Preparar contexto y prompt RAG
     context = "\n".join(f"- {s}" for s in snippets)
     rag_prompt = f"""Usa **solo** la información en la lista a continuación para responder.
 No agregues nada que no esté aquí.
@@ -153,10 +153,11 @@ Pregunta:
 {question}
 """
 
-    # 4e) Llamar al LLM con RAG estricto
+    # 4e) Llamar al LLM con permiso de inferencia desde contexto
     system_msg = (
-        "Eres un asistente que solo sabe lo que está en el contexto. "
-        "Si la respuesta está ahí, úsala; si no, di que no puedo responder."
+        "Eres un asistente que solo utiliza la información en el contexto, "
+        "pero puedes hacer cálculos y deducciones basadas en ella. "
+        "Si el contexto da una forma completada o factorizada, úsala para despejar x paso a paso."
     )
     try:
         chat = client.chat.completions.create(
