@@ -85,7 +85,7 @@ HTML = '''<!doctype html>
       if (!resp.ok) {
         ansDiv.textContent = body;
       } else {
-        ansDiv.innerHTML = body;   // <-- only the <ol>…</ol> goes here
+        ansDiv.innerHTML = body;
         MathJax.typeset();
       }
     });
@@ -123,7 +123,7 @@ def preguntar():
     except Exception as e:
         return f"Error de embedding: {e}", 500
 
-    # 4b) Query Pinecone
+    # 4b) Consultar Pinecone
     try:
         pine = index.query(vector=vector, top_k=5, include_metadata=True)
         snippets = [
@@ -146,14 +146,14 @@ def preguntar():
         except:
             return "No hay datos en Pinecone y falló la búsqueda aleatoria.", 500
 
-    # 4d) Raw steps desde Pinecone
+    # 4d) Raw steps que vienen de Pinecone
     raw_steps = snippets
 
-    # 4e) Solo formateo con OpenAI (HTML <ol>)
+    # 4e) Formateo con OpenAI: sólo wrapping en <ol> y traducción a español
     format_msg = (
         "Eres un formateador HTML muy estricto. "
-        "Toma estas frases y devuélvelas como una lista ordenada "
-        "(<ol><li>…</li></ol>) en español, sin texto adicional:\n\n"
+        "Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) "
+        "en español, sin texto adicional:\n\n"
         + "\n".join(f"- {s}" for s in raw_steps)
     )
     try:
@@ -164,12 +164,17 @@ def preguntar():
                 {"role":"user",  "content":"Por favor formatea la lista."}
             ]
         )
-        answer = chat.choices[0].message.content.strip() + " 🤌"
+        formatted_list = chat.choices[0].message.content.strip()
     except Exception as e:
         return f"Error de formateo: {e}", 500
 
-    # 4f) **Devuelve solo el <ol>…</ol> + emoji**, no la página entera
-    return answer
+    # 4f) Ahora juntamos la pregunta original + la lista formateada
+    # y devolvemos ese fragmento HTML
+    response_fragment = (
+        f'<p><strong>Problema:</strong> {question}</p>'
+        f'{formatted_list} 🤌'
+    )
+    return response_fragment
 
 # ─── 5) Ejecuta servidor ──────────────────────────────────────────────────
 if __name__ == '__main__':
