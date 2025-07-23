@@ -67,7 +67,7 @@ HTML = '''
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
 </head>
 <body>
-  <h1>Pregunta al Bot Multimodal</h1>
+  <h1>Pregunta al Asesore Qualifitcato 🤌</h1>
 
   <form method="post" enctype="multipart/form-data" action="/preguntar">
     <input type="text" name="pregunta" placeholder="Escribe tu problema aquí">
