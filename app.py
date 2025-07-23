@@ -137,7 +137,6 @@ def preguntar():
                 {"role": "user",   "content": question}
             ]
         )
-        answer = chat_resp.choices[0].message.content.strip()
         # ─── Add the 🤌 at the very end ───────────────────────────────────
         answer = answer.rstrip() + " 🤌"
     except Exception as e:
@@ -149,4 +148,3 @@ def preguntar():
 # ─── 5) Lanzar servidor ───────────────────────────────────────────────────
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', '8000')))
-
