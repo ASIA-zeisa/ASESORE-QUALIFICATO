@@ -138,6 +138,8 @@ def preguntar():
             ]
         )
         answer = chat_resp.choices[0].message.content.strip()
+        # ─── Add the 🤌 at the very end ───────────────────────────────────
+        answer = answer.rstrip() + " 🤌"
     except Exception as e:
         return jsonify({"error": f"Error de chat: {e}"}), 500
 
