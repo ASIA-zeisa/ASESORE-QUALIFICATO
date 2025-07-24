@@ -14,7 +14,7 @@ PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
-EXAM_CONFIG = {i: 'off' for i in range(1, 61)}https://github.com/ASIA-zeisa/ASESORE-QUALIFICATO/raw/refs/heads/main/app.py
+EXAM_CONFIG = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
 SECTION_CONFIG = {}
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
@@ -52,7 +52,7 @@ HTML = '''<!doctype html>
 <body>
   <h1>Asesore Qualificato: tu tutore matemático 🤌</h1>
   <form id="qform">
-    <textarea name="texto" rows="3" placeholder="Escribe tu pregunta aquí" required></textarea>
+    <textarea name="texto" rows="3" placeholder="Escribe tu pregunta aquí"></textarea>
     <label>— o selecciona tu pregunta:</label>
     <div class="inline-selects">
       <select name="examen">
@@ -82,21 +82,48 @@ HTML = '''<!doctype html>
   <div class="answer" id="answer"></div>
   <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
   <script>
-    const form=document.getElementById('qform'),loader=document.getElementById('loader'),ansDiv=document.getElementById('answer');
-    form.addEventListener('submit',async e=>{
-      e.preventDefault();ansDiv.innerHTML='';
-      const textoVal=form.elements['texto'].value.trim();
-      const examenVal=form.elements['examen'].value;
-      const seccionVal=form.elements['seccion'].value;
-      const preguntaVal=form.elements['pregunta'].value;
-      const hasImage=form.elements['image'].files.length>0;
-      const isTextOnly=textoVal && !examenVal&&!seccionVal&&!preguntaVal&&!hasImage;
-      const baseMsg=isTextOnly?'⌛ Resolviendo tu pregunta':'⌛ Creando la mejor respuesta';
-      loader.textContent=baseMsg;loader.style.display='block';
-      let dots=0;const iv=setInterval(()=>{dots=(dots+1)%4;loader.textContent=baseMsg+'.'.repeat(dots);},500);
-      const resp=await fetch('/preguntar',{method:'POST',body:new FormData(form)});
-      clearInterval(iv);loader.style.display='none';const body=await resp.text();
-      if(!resp.ok)ansDiv.textContent=body;else{ansDiv.innerHTML=body;MathJax.typeset();}
+    const form = document.getElementById('qform');
+    const loader = document.getElementById('loader');
+    const ansDiv = document.getElementById('answer');
+    const textoEl = form.elements['texto'];
+    const examenEl = form.elements['examen'];
+    const imageEl = form.elements['image'];
+
+    // Toggle disables when texto has content
+    textoEl.addEventListener('input', () => {
+      const hasText = textoEl.value.trim().length > 0;
+      examenEl.disabled = hasText;
+      imageEl.disabled = hasText;
+      if (hasText) {
+        examenEl.value = '';
+        imageEl.value = null;
+      }
+    });
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      ansDiv.innerHTML = '';
+      const textoVal = textoEl.value.trim();
+      const examenVal = examenEl.value;
+      const seccionVal = form.elements['seccion'].value;
+      const preguntaVal = form.elements['pregunta'].value;
+      const hasImage = imageEl.files.length > 0;
+      const isTextOnly = textoVal && !examenVal && !seccionVal && !preguntaVal && !hasImage;
+      const baseMsg = isTextOnly ? '⌛ Resolviendo tu pregunta' : '⌛ Creando la mejor respuesta';
+      loader.textContent = baseMsg;
+      loader.style.display = 'block';
+      let dots = 0;
+      const iv = setInterval(() => {
+        dots = (dots + 1) % 4;
+        loader.textContent = baseMsg + '.'.repeat(dots);
+      }, 500);
+
+      const resp = await fetch('/preguntar', { method: 'POST', body: new FormData(form) });
+      clearInterval(iv);
+      loader.style.display = 'none';
+      const body = await resp.text();
+      if (!resp.ok) ansDiv.textContent = body;
+      else { ansDiv.innerHTML = body; MathJax.typeset(); }
     });
   </script>
 </body>
@@ -118,39 +145,64 @@ def preguntar():
     seccion      = (request.form.get('seccion') or '').strip()
     pregunta_num = (request.form.get('pregunta') or '').strip()
     image_file   = request.files.get('image')
+    # Require either full metadata or image
     if not ((texto and examen and seccion and pregunta_num) or image_file):
         return 'Completa todos los campos o sube una imagen.', 400
+
+    # 4a) Create embedding
     try:
-        if image_file:
+        if image_file and not texto:
             img_bytes = image_file.read()
-            emb = client.embeddings.create(model='image-embedding-001', input=base64.b64encode(img_bytes).decode())
+            emb = client.embeddings.create(
+                model='image-embedding-001',
+                input=base64.b64encode(img_bytes).decode()
+            )
         else:
-            emb = client.embeddings.create(model='text-embedding-3-small', input=texto)
+            emb = client.embeddings.create(
+                model='text-embedding-3-small',
+                input=texto
+            )
         vector = emb.data[0].embedding
     except Exception as e:
         return f'Error de embedding: {e}', 500
+
+    # 4b) Pinecone lookup
     try:
         pine = index.query(vector=vector, top_k=5, include_metadata=True)
-        snippets = [m.metadata.get('text') or m.metadata.get('answer') for m in pine.matches if m.metadata.get('text') or m.metadata.get('answer')]
+        snippets = [m.metadata.get('text') or m.metadata.get('answer')
+                    for m in pine.matches
+                    if m.metadata.get('text') or m.metadata.get('answer')]
     except:
         snippets = []
+
+    # 4c) Wikipedia fallback
     if not snippets:
         try:
-            wiki = requests.get('https://es.wikipedia.org/api/rest_v1/page/random/summary', timeout=5).json()
+            wiki = requests.get(
+                'https://es.wikipedia.org/api/rest_v1/page/random/summary',
+                timeout=5
+            ).json()
             snippets = [wiki.get('extract', 'Lo siento, nada')]
         except:
             return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
+
+    # 4d) Format via LLM
     raw_steps = snippets
-    format_msg = ('Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n' +
-                  '\n'.join(f'- {s}' for s in raw_steps))
+    format_msg = (
+        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
+        + '\n'.join(f'- {s}' for s in raw_steps)
+    )
     try:
         chat = client.chat.completions.create(
             model='gpt-4o-mini',
-            messages=[{'role':'system','content':format_msg},{'role':'user','content':'Por favor formatea la lista.'}]
+            messages=[{'role':'system','content':format_msg},
+                      {'role':'user','content':'Por favor formatea la lista.'}]
         )
         formatted_list = chat.choices[0].message.content.strip()
     except Exception as e:
         return f'Error de formateo: {e}', 500
+
+    # 4e) Build response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
