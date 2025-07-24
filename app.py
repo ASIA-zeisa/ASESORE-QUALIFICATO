@@ -16,10 +16,7 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG      = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
-PREGUNTA_CONFIG  = {i: 'off' for i in range(1, 61)}
-
-# ─── Section options fixed order ─────────────────────────────────────────
-SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
+SECTION_OPTIONS  = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -48,7 +45,7 @@ HTML = '''<!doctype html>
   </style>
   <script>
     window.MathJax = {
-      tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$']] },
+      tex: { inlineMath: [['$','$'], ['\\\\(','\\\\)']], displayMath: [['$$','$$']] },
       svg: { fontCache: 'global' }
     };
   </script>
@@ -76,11 +73,6 @@ HTML = '''<!doctype html>
       </select>
       <select name="pregunta">
         <option value="">Pregunta</option>
-        {% for num, status in pregunta_config.items()|sort %}
-          {% if status == 'on' %}
-            <option value="{{ num }}">{{ num }}</option>
-          {% endif %}
-        {% endfor %}
       </select>
     </div>
     <label>— o sube una imagen:</label>
@@ -102,22 +94,26 @@ HTML = '''<!doctype html>
           pregEl    = form.elements['pregunta'],
           imageEl   = form.elements['image'];
 
+    // Límites por sección
+    const preguntaLimits = {
+      'Lectura':      45,
+      'Redacción':    25,
+      'Matemáticas':  55,
+      'Variable':     25
+    };
+
     // 1) Si hay texto escrito, deshabilita selects e imagen
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
         el.disabled = hasText;
-        if (hasText) {
-          el.tagName.toLowerCase() === 'input'
-            ? el.value = null
-            : el.value = '';
-        }
+        if (hasText) el.value = '';
       });
       seccionEl.required = false;
       pregEl.required    = false;
     });
 
-    // 2) Si seleccionan Examen:
+    // 2) Si seleccionan Examen
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
       textoEl.disabled   = hasExam;
@@ -130,6 +126,18 @@ HTML = '''<!doctype html>
       } else {
         seccionEl.value = '';
         pregEl.value    = '';
+      }
+    });
+
+    // 3) Al cambiar Sección, repuebla Pregunta
+    seccionEl.addEventListener('change', () => {
+      const limit = preguntaLimits[seccionEl.value] || 0;
+      pregEl.innerHTML = '<option value="">Pregunta</option>';
+      for (let i = 1; i <= limit; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i;
+        pregEl.appendChild(opt);
       }
     });
 
@@ -186,8 +194,7 @@ def home():
     return render_template_string(
         HTML,
         exam_config     = EXAM_CONFIG,
-        section_options = SECTION_OPTIONS,
-        pregunta_config = PREGUNTA_CONFIG
+        section_options = SECTION_OPTIONS
     )
 
 # ─── 4) Handle question ──────────────────────────────────────────────────
@@ -212,7 +219,7 @@ def preguntar():
             "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
         ), 400
 
-    # servidor: si hay examen, exige sección y pregunta
+    # server-side: if exam selected, require section & question
     if examen and not (seccion and pregunta_num):
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
