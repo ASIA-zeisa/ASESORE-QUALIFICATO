@@ -17,6 +17,10 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
 SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
+PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
+
+# ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
+DUMMY_VECTOR = [0.0] * 1536  # your index dimension is 1536
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -94,15 +98,14 @@ HTML = '''<!doctype html>
           pregEl    = form.elements['pregunta'],
           imageEl   = form.elements['image'];
 
-    // Límites por sección
     const preguntaLimits = {
-      'Lectura':      45,
-      'Redacción':    25,
-      'Matemáticas':  55,
-      'Variable':     25
+      'Lectura':     45,
+      'Redacción':   25,
+      'Matemáticas': 55,
+      'Variable':    25
     };
 
-    // 1) Si hay texto escrito, deshabilita selects e imagen
+    // 1) Si hay texto, deshabilita selects e imagen
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
@@ -145,14 +148,13 @@ HTML = '''<!doctype html>
       e.preventDefault();
       ansDiv.innerHTML = '';
 
-      const textoVal     = textoEl.value.trim(),
-            examenVal    = examenEl.value,
-            seccionVal   = seccionEl.value,
-            preguntaNum  = pregEl.value,
-            hasImage     = imageEl.files.length > 0,
-            isTextOnly   = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
+      const textoVal    = textoEl.value.trim(),
+            examenVal   = examenEl.value,
+            seccionVal  = seccionEl.value,
+            preguntaNum = pregEl.value,
+            hasImage    = imageEl.files.length > 0,
+            isTextOnly  = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
 
-      // validación cliente
       if (examenVal && (!seccionVal || !preguntaNum)) {
         ansDiv.textContent = "Cuando seleccionas examen, debes elegir sección y pregunta.";
         return;
@@ -223,17 +225,18 @@ def preguntar():
     if examen and not (seccion and pregunta_num):
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
-    # 4a) Lookup snippet by metadata if exam/section/question provided
+    # 4a) Exact-match lookup by metadata
     raw_steps = []
     if examen and seccion and pregunta_num:
         try:
             pine = index.query(
+                vector=DUMMY_VECTOR,
                 top_k=1,
                 include_metadata=True,
                 filter={
-                    "exam":      int(examen),
-                    "section":   seccion,
-                    "question":  int(pregunta_num)
+                    "exam":     int(examen),
+                    "section":  seccion,
+                    "question": int(pregunta_num)
                 }
             )
             if pine.matches:
@@ -241,11 +244,10 @@ def preguntar():
                 snippet = meta.get("text") or meta.get("answer")
                 if snippet:
                     raw_steps = [snippet]
-            # else fall back below
         except Exception:
             raw_steps = []
 
-    # 4b) If no metadata match, do embedding + similarity search
+    # 4b) Fallback to similarity search if no exact match
     if not raw_steps:
         try:
             if image_file and not texto:
