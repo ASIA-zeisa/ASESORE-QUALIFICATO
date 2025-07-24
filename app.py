@@ -41,7 +41,7 @@ HTML = '''<!doctype html>
   <script>
     window.MathJax = {
       tex: {
-        inlineMath: [['$','$'], ['\\\\(','\\\\)']],
+        inlineMath: [['$','$'], ['\\(','\\)']],
         displayMath: [['$$','$$']]
       },
       svg: { fontCache: 'global' }
@@ -52,7 +52,9 @@ HTML = '''<!doctype html>
 <body>
   <h1>Asesore Qualificato: tu tutore matemático 🤌</h1>
   <form id="qform">
-    <input type="text" name="pregunta" placeholder="Escribe tu problema aquí" required>
+    <input type="text" name="examen" placeholder="Examen" required>
+    <input type="text" name="seccion" placeholder="Sección" required>
+    <input type="text" name="pregunta" placeholder="Pregunta" required>
     <label>— o sube una imagen:</label>
     <input type="file" name="image">
     <button type="submit">Enviar</button>
@@ -107,10 +109,13 @@ def home():
 # ─── 4) Handle question ──────────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
+    examen     = (request.form.get('examen') or "").strip()
+    seccion    = (request.form.get('seccion') or "").strip()
     question   = (request.form.get('pregunta') or "").strip()
     image_file = request.files.get('image')
-    if not (question or image_file):
-        return "Proporciona texto o sube una imagen.", 400
+
+    if not ((question and examen and seccion) or image_file):
+        return "Proporciona Examen, Sección y Pregunta, o sube una imagen.", 400
 
     # 4a) Create embedding
     try:
@@ -155,12 +160,12 @@ def preguntar():
     # 4d) Raw steps
     raw_steps = snippets
 
-    # 4e) Only HTML formatting via LLM, using \(…\) delimiters
+    # 4e) Only HTML formatting via LLM, using \(...\) delimiters
     format_msg = (
         "Eres un formateador HTML muy estricto. "
         "Toma estas frases y devuélvelas como una lista ordenada "
         "(<ol><li>…</li></ol>) en español, sin texto adicional. "
-        "Usa siempre los delimitadores LaTeX \\(...\\) para las fórmulas.\n\n"
+        "Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n"
         + "\n".join(f"- {s}" for s in raw_steps)
     )
     try:
@@ -175,9 +180,11 @@ def preguntar():
     except Exception as e:
         return f"Error de formateo: {e}", 500
 
-    # 4f) Prepend problem + return snippet
+    # 4f) Prepend metadata + return snippet
     response_fragment = (
-        f'<p><strong>Problema:</strong> {question}</p>'
+        f'<p><strong>Examen:</strong> {examen}</p>'
+        f'<p><strong>Sección:</strong> {seccion}</p>'
+        f'<p><strong>Pregunta:</strong> {question}</p>'
         f'{formatted_list} 🤌'
     )
     return response_fragment
