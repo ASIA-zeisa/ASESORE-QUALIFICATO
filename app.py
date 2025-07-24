@@ -16,8 +16,10 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG      = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
-SECTION_CONFIG   = {}  # Rellena con tus on/off si lo necesitas
 PREGUNTA_CONFIG  = {i: 'off' for i in range(1, 61)}
+
+# ─── Section options fixed order ─────────────────────────────────────────
+SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -68,10 +70,8 @@ HTML = '''<!doctype html>
       </select>
       <select name="seccion">
         <option value="">Sección</option>
-        {% for key, status in section_config.items()|sort %}
-          {% if status == 'on' %}
-            <option value="{{ key }}">{{ key }}</option>
-          {% endif %}
+        {% for opt in section_options %}
+          <option value="{{ opt }}">{{ opt }}</option>
         {% endfor %}
       </select>
       <select name="pregunta">
@@ -108,16 +108,16 @@ HTML = '''<!doctype html>
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
         el.disabled = hasText;
         if (hasText) {
-          if (el.tagName.toLowerCase() === 'input') el.value = null;
-          else el.value = '';
+          el.tagName.toLowerCase() === 'input'
+            ? el.value = null
+            : el.value = '';
         }
       });
-      // también quitar la obligatoriedad si la había
       seccionEl.required = false;
       pregEl.required    = false;
     });
 
-    // 2) Si seleccionan Examen, deshabilita textarea e imagen y exige Sección y Pregunta
+    // 2) Si seleccionan Examen:
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
       textoEl.disabled   = hasExam;
@@ -128,7 +128,6 @@ HTML = '''<!doctype html>
         textoEl.value = '';
         imageEl.value = null;
       } else {
-        // al deseleccionar examen, limpiar sección/pregunta
         seccionEl.value = '';
         pregEl.value    = '';
       }
@@ -145,7 +144,7 @@ HTML = '''<!doctype html>
             hasImage     = imageEl.files.length > 0,
             isTextOnly   = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
 
-      // validación adicional en cliente
+      // validación cliente
       if (examenVal && (!seccionVal || !preguntaNum)) {
         ansDiv.textContent = "Cuando seleccionas examen, debes elegir sección y pregunta.";
         return;
@@ -186,9 +185,9 @@ HTML = '''<!doctype html>
 def home():
     return render_template_string(
         HTML,
-        exam_config=EXAM_CONFIG,
-        section_config=SECTION_CONFIG,
-        pregunta_config=PREGUNTA_CONFIG
+        exam_config     = EXAM_CONFIG,
+        section_options = SECTION_OPTIONS,
+        pregunta_config = PREGUNTA_CONFIG
     )
 
 # ─── 4) Handle question ──────────────────────────────────────────────────
@@ -213,7 +212,7 @@ def preguntar():
             "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
         ), 400
 
-    # server-side: si hay examen, exige sección y pregunta
+    # servidor: si hay examen, exige sección y pregunta
     if examen and not (seccion and pregunta_num):
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
