@@ -317,7 +317,7 @@ def preguntar():
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
-        f "<p><strong>Sección:</strong> {seccion}</p>"
+        f"<p><strong>Sección:</strong> {seccion}</p>"
         f"<p><strong>Pregunta nº:</strong> {pregunta_num}</p>"
         f"{formatted_list} 🤌"
     )
