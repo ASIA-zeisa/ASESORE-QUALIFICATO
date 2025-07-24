@@ -36,7 +36,7 @@ HTML = '''<!doctype html>
     h1{text-align:center;margin-bottom:1.2rem;}
     form{display:flex;flex-direction:column;gap:1rem;}
     .inline-selects{display:flex;gap:1rem;}
-    textarea,select,button{font-size:1rem;padding:0.6rem;}
+    textarea,select,button,input[type=file]{font-size:1rem;padding:0.6rem;}
     select{flex:1;}
     button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
     button:hover{background:#0e3c86;}
@@ -87,17 +87,20 @@ HTML = '''<!doctype html>
     const ansDiv = document.getElementById('answer');
     const textoEl = form.elements['texto'];
     const examenEl = form.elements['examen'];
+    const seccionEl = form.elements['seccion'];
+    const preguntaEl = form.elements['pregunta'];
     const imageEl = form.elements['image'];
 
-    // Toggle disables when texto has content
+    // Disable selects and file upload when there's text
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
-      examenEl.disabled = hasText;
-      imageEl.disabled = hasText;
-      if (hasText) {
-        examenEl.value = '';
-        imageEl.value = null;
-      }
+      [examenEl, seccionEl, preguntaEl, imageEl].forEach(el => {
+        el.disabled = hasText;
+        if (hasText) {
+          if (el.tagName.toLowerCase() === 'input') el.value = null;
+          else el.value = '';
+        }
+      });
     });
 
     form.addEventListener('submit', async e => {
@@ -105,8 +108,8 @@ HTML = '''<!doctype html>
       ansDiv.innerHTML = '';
       const textoVal = textoEl.value.trim();
       const examenVal = examenEl.value;
-      const seccionVal = form.elements['seccion'].value;
-      const preguntaVal = form.elements['pregunta'].value;
+      const seccionVal = seccionEl.value;
+      const preguntaVal = preguntaEl.value;
       const hasImage = imageEl.files.length > 0;
       const isTextOnly = textoVal && !examenVal && !seccionVal && !preguntaVal && !hasImage;
       const baseMsg = isTextOnly ? '⌛ Resolviendo tu pregunta' : '⌛ Creando la mejor respuesta';
@@ -145,13 +148,12 @@ def preguntar():
     seccion      = (request.form.get('seccion') or '').strip()
     pregunta_num = (request.form.get('pregunta') or '').strip()
     image_file   = request.files.get('image')
-    # Require either full metadata or image
     if not ((texto and examen and seccion and pregunta_num) or image_file):
         return 'Completa todos los campos o sube una imagen.', 400
 
     # 4a) Create embedding
     try:
-        if image_file and not texto:
+        if image_file and !texto:
             img_bytes = image_file.read()
             emb = client.embeddings.create(
                 model='image-embedding-001',
@@ -189,14 +191,13 @@ def preguntar():
     # 4d) Format via LLM
     raw_steps = snippets
     format_msg = (
-        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
+        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\\(…\\\) para las fórmulas.\n\n'
         + '\n'.join(f'- {s}' for s in raw_steps)
     )
     try:
         chat = client.chat.completions.create(
             model='gpt-4o-mini',
-            messages=[{'role':'system','content':format_msg},
-                      {'role':'user','content':'Por favor formatea la lista.'}]
+            messages=[{'role':'system','content':format_msg}, {'role':'user','content':'Por favor formatea la lista.'}]
         )
         formatted_list = chat.choices[0].message.content.strip()
     except Exception as e:
