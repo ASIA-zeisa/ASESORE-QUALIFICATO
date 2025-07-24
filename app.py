@@ -116,34 +116,22 @@ HTML = '''<!doctype html>
       'Variable':    25
     };
 
-    // 1) si hay texto, deshabilita selects e imagen
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
-        el.disabled = hasText;
-        if (hasText) el.value = '';
+        el.disabled = hasText; if (hasText) el.value = '';
       });
-      seccionEl.required = false;
-      pregEl.required    = false;
+      seccionEl.required = false; pregEl.required = false;
     });
 
-    // 2) si seleccionan examen, deshabilita texto/imagen y exige sección+pregunta
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
-      textoEl.disabled   = hasExam;
-      imageEl.disabled   = hasExam;
-      seccionEl.required = hasExam;
-      pregEl.required    = hasExam;
-      if (hasExam) {
-        textoEl.value = '';
-        imageEl.value = null;
-      } else {
-        seccionEl.value = '';
-        pregEl.value    = '';
-      }
+      textoEl.disabled = hasExam; imageEl.disabled = hasExam;
+      seccionEl.required = hasExam; pregEl.required = hasExam;
+      if (hasExam) { textoEl.value = ''; imageEl.value = null; }
+      else { seccionEl.value = ''; pregEl.value = ''; }
     });
 
-    // 3) repuebla pregunta al cambiar sección
     seccionEl.addEventListener('change', () => {
       const limit = preguntaLimits[seccionEl.value] || 0;
       pregEl.innerHTML = '<option value="">Pregunta</option>';
@@ -155,8 +143,7 @@ HTML = '''<!doctype html>
     });
 
     form.addEventListener('submit', async e => {
-      e.preventDefault();
-      ansDiv.innerHTML = '';
+      e.preventDefault(); ansDiv.innerHTML = '';
       const textoVal    = textoEl.value.trim(),
             examenVal   = examenEl.value,
             seccionVal  = seccionEl.value,
@@ -168,7 +155,6 @@ HTML = '''<!doctype html>
         ansDiv.textContent = "Cuando seleccionas examen, debes elegir sección y pregunta.";
         return;
       }
-
       loader.textContent = isTextOnly
         ? '⌛ Resolviendo tu pregunta'
         : '⌛ Creando la mejor respuesta';
@@ -181,18 +167,12 @@ HTML = '''<!doctype html>
       }, 500);
 
       const resp = await fetch('/preguntar', {
-        method: 'POST',
-        body: new FormData(form)
+        method: 'POST', body: new FormData(form)
       });
-
-      clearInterval(iv);
-      loader.style.display = 'none';
+      clearInterval(iv); loader.style.display = 'none';
       const body = await resp.text();
       if (!resp.ok) ansDiv.textContent = body;
-      else {
-        ansDiv.innerHTML = body;
-        MathJax.typeset();
-      }
+      else { ansDiv.innerHTML = body; MathJax.typeset(); }
     });
   </script>
 </body>
@@ -249,32 +229,36 @@ def preguntar():
         except Exception:
             snippet = None
 
-    # 4b) If exact-match found, wrap and generate on-the-fly explanation
+    # 4b) If exact-match found, wrap & generate concise explanation
     if snippet:
         clean = snippet.strip('$')
-        # prepare prompts
-        sys_p = "Eres un profesor de matemáticas que explica paso a paso en español."
-        # use user text if provided, else identify the exam/section/question
+        system_prompt = (
+            "Eres un profesor de matemáticas que explica de forma muy concisa "
+            "en español, en no más de 5 pasos numerados, usando delimitadores "
+            "\\(…\\) para las expresiones matemáticas."
+        )
         context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
-        usr_p = (
-            f"Hecho: {context}\n"
+        user_prompt = (
+            f"Ecuación: {context}\n"
             f"Respuesta: \\({clean}\\)\n\n"
-            "Explica detalladamente cómo llegas de la ecuación original a esa respuesta."
+            "Proporciona una lista numerada (1–5) de los pasos clave "
+            "para completar el cuadrado rápidamente."
         )
         chat = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role":"system","content":sys_p},
-                {"role":"user","content":usr_p}
+                {"role":"system","content":system_prompt},
+                {"role":"user","content":user_prompt}
             ]
         )
         explanation = chat.choices[0].message.content.strip()
         formatted_list = (
             f"<ol><li>\\({clean}\\)</li></ol>"
-            f"<p><strong>Explicación paso a paso:</strong> {explanation}</p>"
+            f"<p><strong>Pasos rápidos:</strong></p>"
+            f"{explanation}"
         )
     else:
-        # 4c) Fallback to embedding → similarity search
+        # 4c) Fallback: embedding → similarity → LLM formatter
         try:
             if image_file and not texto:
                 img_bytes = image_file.read()
@@ -301,7 +285,6 @@ def preguntar():
         except Exception:
             raw_steps = []
 
-        # 4d) Wikipedia fallback
         if not raw_steps:
             try:
                 wiki = requests.get(
@@ -312,7 +295,6 @@ def preguntar():
             except:
                 return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
 
-        # 4e) HTML formatting via LLM
         format_msg = (
             'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
             'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
@@ -331,11 +313,11 @@ def preguntar():
         except Exception as e:
             return f'Error de formateo: {e}', 500
 
-    # 4f) Build and return response
+    # 4f) Return response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
-        f"<p><strong>Sección:</strong> {seccion}</p>"
+        f "<p><strong>Sección:</strong> {seccion}</p>"
         f"<p><strong>Pregunta nº:</strong> {pregunta_num}</p>"
         f"{formatted_list} 🤌"
     )
@@ -343,4 +325,6 @@ def preguntar():
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT','8000')), debug=False)
+    app.run(host='0.0.0.0',
+            port=int(os.getenv('PORT','8000')),
+            debug=False)
