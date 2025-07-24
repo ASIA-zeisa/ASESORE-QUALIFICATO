@@ -226,7 +226,7 @@ def preguntar():
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
     # 4a) Exact-match lookup by metadata
-    raw_steps = []
+    snippet = None
     if examen and seccion and pregunta_num:
         try:
             pine = index.query(
@@ -240,80 +240,36 @@ def preguntar():
                 }
             )
             if pine.matches:
-                meta = pine.matches[0].metadata
+                meta    = pine.matches[0].metadata
                 snippet = meta.get("text") or meta.get("answer")
-                if snippet:
-                    raw_steps = [snippet]
         except Exception:
-            raw_steps = []
+            snippet = None
 
-    # 4b) Fallback to similarity search if no exact match
-    if not raw_steps:
+    # 4b) If we got an exact snippet, wrap it manually
+    if snippet:
+        clean = snippet.strip('$')
+        formatted_list = f"<ol><li>\\({clean}\\)</li></ol>"
+    else:
+        # 4c) Fallback to embedding → similarity search
         try:
             if image_file and not texto:
-                img_bytes = image_file.read()
-                emb = client.embeddings.create(
-                    model='image-embedding-001',
-                    input=base64.b64encode(img_bytes).decode()
-                )
+                …
             else:
-                emb = client.embeddings.create(
-                    model='text-embedding-3-small',
-                    input=texto
-                )
+                …
             vector = emb.data[0].embedding
-            pine = index.query(
-                vector=vector,
-                top_k=5,
-                include_metadata=True
-            )
-            raw_steps = [
-                m.metadata.get('text') or m.metadata.get('answer')
-                for m in pine.matches
-                if m.metadata.get('text') or m.metadata.get('answer')
-            ]
+            pine = index.query(vector=vector, top_k=5, include_metadata=True)
+            raw_steps = […]
         except Exception:
             raw_steps = []
 
-    # 4c) Wikipedia fallback
-    if not raw_steps:
-        try:
-            wiki = requests.get(
-                'https://es.wikipedia.org/api/rest_v1/page/random/summary',
-                timeout=5
-            ).json()
-            raw_steps = [wiki.get('extract', 'Lo siento, nada')]
-        except:
-            return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
+        # 4d) Wikipedia fallback
+        if not raw_steps:
+            …
 
-    # 4d) HTML formatting via LLM
-    format_msg = (
-        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
-        'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
-        'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
-        + '\n'.join(f'- {s}' for s in raw_steps)
-    )
-    try:
-        chat = client.chat.completions.create(
-            model='gpt-4o-mini',
-            messages=[
-                {'role':'system','content':format_msg},
-                {'role':'user',  'content':'Por favor formatea la lista.'}
-            ]
-        )
+        # 4e) LLM formatting
+        format_msg = …
+        chat = client.chat.completions.create(…)
         formatted_list = chat.choices[0].message.content.strip()
-    except Exception as e:
-        return f'Error de formateo: {e}', 500
-
-    # 4e) Build and return response
-    response_fragment = (
-        f"<p><strong>Enunciado:</strong> {texto}</p>"
-        f"<p><strong>Examen:</strong> {examen}</p>"
-        f"<p><strong>Sección:</strong> {seccion}</p>"
-        f"<p><strong>Pregunta nº:</strong> {pregunta_num}</p>"
-        f"{formatted_list} 🤌"
-    )
-    return response_fragment
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
