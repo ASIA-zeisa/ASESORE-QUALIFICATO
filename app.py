@@ -20,7 +20,7 @@ SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
 # ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
-DUMMY_VECTOR = [0.0] * 1536  # your index dimension is 1536
+DUMMY_VECTOR = [0.0] * 1536  # <-- your Pinecone index has 1536 dimensions
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -49,8 +49,8 @@ HTML = '''<!doctype html>
   </style>
   <script>
     window.MathJax = {
-      tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$']] },
-      svg: { fontCache: 'global' }
+      tex: { inlineMath:[['$','$'],['\\\\(','\\\\)']], displayMath:[['$$','$$']] },
+      svg: { fontCache:'global' }
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
@@ -105,7 +105,7 @@ HTML = '''<!doctype html>
       'Variable':    25
     };
 
-    // 1) Si hay texto, deshabilita selects e imagen
+    // Disable selects & image if text is entered
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
@@ -116,7 +116,7 @@ HTML = '''<!doctype html>
       pregEl.required    = false;
     });
 
-    // 2) Si seleccionan Examen
+    // If an exam is selected, disable text & image, require section+question
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
       textoEl.disabled   = hasExam;
@@ -132,7 +132,7 @@ HTML = '''<!doctype html>
       }
     });
 
-    // 3) Al cambiar Sección, repuebla Pregunta
+    // Populate question dropdown based on section
     seccionEl.addEventListener('change', () => {
       const limit = preguntaLimits[seccionEl.value] || 0;
       pregEl.innerHTML = '<option value="">Pregunta</option>';
@@ -253,23 +253,70 @@ def preguntar():
         # 4c) Fallback to embedding → similarity search
         try:
             if image_file and not texto:
-                …
+                img_bytes = image_file.read()
+                emb = client.embeddings.create(
+                    model='image-embedding-001',
+                    input=base64.b64encode(img_bytes).decode()
+                )
             else:
-                …
+                emb = client.embeddings.create(
+                    model='text-embedding-3-small',
+                    input=texto
+                )
             vector = emb.data[0].embedding
-            pine = index.query(vector=vector, top_k=5, include_metadata=True)
-            raw_steps = […]
+
+            pine = index.query(
+                vector=vector,
+                top_k=5,
+                include_metadata=True
+            )
+            raw_steps = [
+                m.metadata.get('text') or m.metadata.get('answer')
+                for m in pine.matches
+                if m.metadata.get('text') or m.metadata.get('answer')
+            ]
         except Exception:
             raw_steps = []
 
         # 4d) Wikipedia fallback
         if not raw_steps:
-            …
+            try:
+                wiki = requests.get(
+                    'https://es.wikipedia.org/api/rest_v1/page/random/summary',
+                    timeout=5
+                ).json()
+                raw_steps = [wiki.get('extract','Lo siento, nada')]
+            except:
+                return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
 
-        # 4e) LLM formatting
-        format_msg = …
-        chat = client.chat.completions.create(…)
-        formatted_list = chat.choices[0].message.content.strip()
+        # 4e) HTML formatting via LLM
+        format_msg = (
+            'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
+            'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
+            'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
+            + '\n'.join(f'- {s}' for s in raw_steps)
+        )
+        try:
+            chat = client.chat.completions.create(
+                model='gpt-4o-mini',
+                messages=[
+                    {'role':'system','content':format_msg},
+                    {'role':'user',  'content':'Por favor formatea la lista.'}
+                ]
+            )
+            formatted_list = chat.choices[0].message.content.strip()
+        except Exception as e:
+            return f'Error de formateo: {e}', 500
+
+    # 4f) Build and return response
+    response_fragment = (
+        f"<p><strong>Enunciado:</strong> {texto}</p>"
+        f"<p><strong>Examen:</strong> {examen}</p>"
+        f"<p><strong>Sección:</strong> {seccion}</p>"
+        f"<p><strong>Pregunta nº:</strong> {pregunta_num}</p>"
+        f"{formatted_list} 🤌"
+    )
+    return response_fragment
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
