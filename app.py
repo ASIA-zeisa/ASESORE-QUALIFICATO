@@ -15,7 +15,7 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG = {i: 'off' for i in range(1, 61)}
-EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
+EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'on', 4: 'on', 5: 'on'})
 SECTION_CONFIG = {}
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 PREGUNTA_CONFIG.update({})
@@ -36,7 +36,9 @@ HTML = '''<!doctype html>
     body{max-width:720px;margin:2rem auto;font:18px/1.4 sans-serif;color:#222;}
     h1{text-align:center;margin-bottom:1.2rem;}
     form{display:flex;flex-direction:column;gap:1rem;}
-    textarea, select, button{font-size:1rem;padding:0.6rem;}
+    .inline-selects{display:flex;gap:1rem;}
+    select,textarea,button{font-size:1rem;padding:0.6rem;}
+    select{flex:1;}
     button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
     button:hover{background:#0e3c86;}
     #loader{margin-top:1rem;font-style:italic;display:none;}
@@ -52,37 +54,45 @@ HTML = '''<!doctype html>
   <h1>Asesore Qualificato: tu tutore matemático 🤌</h1>
   <form id="qform">
     <textarea name="texto" rows="3" placeholder="Escribe tu pregunta aquí" required></textarea>
-    <select name="examen" required>
-      <option value="">Selecciona examen</option>
-      {% for num, status in exam_config.items()|sort %}
-        {% if status == 'on' %}
-      <option value="{{ num }}">{{ num }}</option>
-        {% endif %}
-      {% endfor %}
-    </select>
-    <select name="seccion" required>
-      <option value="">Selecciona sección</option>
-      {% for key, status in section_config.items()|sort %}
-        {% if status == 'on' %}
-      <option value="{{ key }}">{{ key }}</option>
-        {% endif %}
-      {% endfor %}
-    </select>
-    <select name="pregunta" required>
-      <option value="">Selecciona pregunta</option>
-      {% for num, status in pregunta_config.items()|sort %}
-        {% if status == 'on' %}
-      <option value="{{ num }}">{{ num }}</option>
-        {% endif %}
-      {% endfor %}
-    </select>
+
+    <label>— o selecciona tu pregunta:</label>
+    <div class="inline-selects">
+      <select name="examen" required>
+        <option value="">Examen</option>
+        {% for num, status in exam_config.items()|sort %}
+          {% if status == 'on' %}
+        <option value="{{ num }}">{{ num }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <select name="seccion" required>
+        <option value="">Sección</option>
+        {% for key, status in section_config.items()|sort %}
+          {% if status == 'on' %}
+        <option value="{{ key }}">{{ key }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <select name="pregunta" required>
+        <option value="">Pregunta</option>
+        {% for num, status in pregunta_config.items()|sort %}
+          {% if status == 'on' %}
+        <option value="{{ num }}">{{ num }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+
     <label>— o sube una imagen:</label>
     <input type="file" name="image">
     <button type="submit">Enviar</button>
   </form>
+
   <div id="loader">⌛ Creando la mejor respuesta</div>
   <div class="answer" id="answer"></div>
+
   <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
+
   <script>
     const form=document.getElementById('qform'),loader=document.getElementById('loader'),ansDiv=document.getElementById('answer');
     form.addEventListener('submit',async e=>{e.preventDefault();ansDiv.innerHTML='';loader.style.display='block';let dots=0,iv=setInterval(()=>{dots=(dots+1)%4;loader.textContent='⌛ Creando la mejor respuesta'+'.'.repeat(dots);},500);const resp=await fetch('/preguntar',{method:'POST',body:new FormData(form)});clearInterval(iv);loader.style.display='none';const body=await resp.text();resp.ok?ansDiv.innerHTML=body:(ansDiv.textContent=body);resp.ok&&MathJax.typeset();});
@@ -101,11 +111,11 @@ def home():
 # ─── 4) Handle question ──────────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
-    texto          = (request.form.get('texto') or "").strip()
-    examen         = (request.form.get('examen') or "").strip()
-    seccion        = (request.form.get('seccion') or "").strip()
-    pregunta_num   = (request.form.get('pregunta') or "").strip()
-    image_file     = request.files.get('image')
+    texto        = (request.form.get('texto') or "").strip()
+    examen       = (request.form.get('examen') or "").strip()
+    seccion      = (request.form.get('seccion') or "").strip()
+    pregunta_num = (request.form.get('pregunta') or "").strip()
+    image_file   = request.files.get('image')
 
     if not ((texto and examen and seccion and pregunta_num) or image_file):
         return "Completa todos los campos o sube una imagen.", 400
@@ -143,7 +153,7 @@ def preguntar():
 
     # 4d) Format via LLM
     raw_steps = snippets
-    format_msg = ("Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n" +
+    format_msg = ("Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\(...\\) para las fórmulas.\n\n" +
                   "\n".join(f"- {s}" for s in raw_steps))
     try:
         chat = client.chat.completions.create(
