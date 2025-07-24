@@ -143,13 +143,21 @@ def home():
 # ─── 4) Handle question ──────────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
-    texto        = (request.form.get('texto') or '').strip()
-    examen       = (request.form.get('examen') or '').strip()
-    seccion      = (request.form.get('seccion') or '').strip()
-    pregunta_num = (request.form.get('pregunta') or '').strip()
-    image_file   = request.files.get('image')
-    if not ((texto and examen and seccion and pregunta_num) or image_file):
-        return 'Completa todos los campos o sube una imagen.', 400
+    # — your new “texto” field —
+    texto      = (request.form.get('texto') or "").strip()
+    examen     = request.form.get('examen')
+    seccion    = request.form.get('seccion')
+    pregunta_n = request.form.get('pregunta')
+    image_file = request.files.get('image')
+
+    # — block mixed inputs: if the user wrote text, they can’t pick examen/seccion/pregunta nor upload image —
+    if texto and (examen or seccion or pregunta_n or image_file):
+        return ("Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, “Pregunta” "
+                "ni subir una imagen al mismo tiempo."), 400
+
+    # — existing “must provide something” check —
+    if not (texto or examen or seccion or pregunta_n or image_file):
+        return "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen.", 400
 
     # 4a) Create embedding
     try:
