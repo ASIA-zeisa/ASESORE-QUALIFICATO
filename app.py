@@ -6,21 +6,21 @@ from pinecone import Pinecone
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# ─── 0) Carga variables de entorno ───────────────────────────────────────
+# ─── 0) Load env vars ─────────────────────────────────────────────────────
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV     = os.getenv("PINECONE_ENV")
 PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
-# ─── 1) Inicializa Pinecone & OpenAI ────────────────────────────────────
+# ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index  = pc.Index(PINECONE_INDEX)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 app = Flask(__name__)
 
-# ─── 2) HTML + loader JS con títulos corregidos ───────────────────────────
+# ─── 2) HTML + MathJax setup ──────────────────────────────────────────────
 HTML = '''<!doctype html>
 <html lang="es">
 <head>
@@ -39,7 +39,13 @@ HTML = '''<!doctype html>
     footer{margin-top:2rem;text-align:center;color:#666;font-size:0.9rem;}
   </style>
   <script>
-    window.MathJax={tex:{inlineMath:[['\\\\(','\\\\)']]},svg:{fontCache:'global'}};
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$','$'], ['\\\\(','\\\\)']],
+        displayMath: [['$$','$$']]
+      },
+      svg: { fontCache: 'global' }
+    };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
 </head>
@@ -80,8 +86,8 @@ HTML = '''<!doctype html>
 
       clearInterval(iv);
       loader.style.display = 'none';
-
       const body = await resp.text();
+
       if (!resp.ok) {
         ansDiv.textContent = body;
       } else {
@@ -93,12 +99,12 @@ HTML = '''<!doctype html>
 </body>
 </html>'''
 
-# ─── 3) Ruta de inicio ────────────────────────────────────────────────────
+# ─── 3) Home route ───────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def home():
     return render_template_string(HTML)
 
-# ─── 4) Procesa la pregunta ───────────────────────────────────────────────
+# ─── 4) Handle question ──────────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
     question   = (request.form.get('pregunta') or "").strip()
@@ -106,7 +112,7 @@ def preguntar():
     if not (question or image_file):
         return "Proporciona texto o sube una imagen.", 400
 
-    # 4a) Crear embedding (texto o imagen)
+    # 4a) Create embedding
     try:
         if image_file:
             img_bytes = image_file.read()
@@ -123,7 +129,7 @@ def preguntar():
     except Exception as e:
         return f"Error de embedding: {e}", 500
 
-    # 4b) Consultar Pinecone
+    # 4b) Pinecone lookup
     try:
         pine = index.query(vector=vector, top_k=5, include_metadata=True)
         snippets = [
@@ -134,7 +140,7 @@ def preguntar():
     except Exception:
         snippets = []
 
-    # 4c) Fallback random Wiki si Pinecone vacío
+    # 4c) Wikipedia fallback
     if not snippets:
         try:
             wiki = requests.get(
@@ -146,14 +152,15 @@ def preguntar():
         except:
             return "No hay datos en Pinecone y falló la búsqueda aleatoria.", 500
 
-    # 4d) Raw steps que vienen de Pinecone
+    # 4d) Raw steps
     raw_steps = snippets
 
-    # 4e) Formateo con OpenAI: sólo wrapping en <ol> y traducción a español
+    # 4e) Only HTML formatting via LLM, using \(…\) delimiters
     format_msg = (
         "Eres un formateador HTML muy estricto. "
-        "Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) "
-        "en español, sin texto adicional:\n\n"
+        "Toma estas frases y devuélvelas como una lista ordenada "
+        "(<ol><li>…</li></ol>) en español, sin texto adicional. "
+        "Usa siempre los delimitadores LaTeX \\(...\\) para las fórmulas.\n\n"
         + "\n".join(f"- {s}" for s in raw_steps)
     )
     try:
@@ -168,17 +175,15 @@ def preguntar():
     except Exception as e:
         return f"Error de formateo: {e}", 500
 
-    # 4f) Ahora juntamos la pregunta original + la lista formateada
-    # y devolvemos ese fragmento HTML
+    # 4f) Prepend problem + return snippet
     response_fragment = (
         f'<p><strong>Problema:</strong> {question}</p>'
         f'{formatted_list} 🤌'
     )
     return response_fragment
 
-# ─── 5) Ejecuta servidor ──────────────────────────────────────────────────
-if __name__=='__main__':
-    # debug=True turns on the interactive debugger so you see the full stack
+# ─── 5) Run server ───────────────────────────────────────────────────────
+if __name__ == '__main__':
     app.run(host='0.0.0.0',
             port=int(os.getenv('PORT','8000')),
-            debug=True)
+            debug=False)
