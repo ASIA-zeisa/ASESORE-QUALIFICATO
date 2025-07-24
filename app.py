@@ -232,17 +232,22 @@ def preguntar():
     # 4b) If exact-match found, wrap & generate concise explanation
     if snippet:
         clean = snippet.strip('$')
-        system_prompt = (
-            "Eres un profesor de matemáticas que explica de forma muy concisa "
-            "en español, en no más de 5 pasos numerados, usando delimitadores "
-            "\\(…\\) para las expresiones matemáticas."
-        )
-        context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
+        system_prompt = """\
+        Eres un profesor de matemáticas muy claro. Devuélveme **solo** los pasos
+        clave numerados, cada uno en **su propia línea**, sin texto extra
+        ni emojis, así:
+        
+        1. Paso uno…
+        2. Paso dos…
+        3. Paso tres…
+        """
+        
         user_prompt = (
-            f"Ecuación: {context}\n"
-            f"Respuesta: \\({clean}\\)\n\n"
-            "Proporciona una lista numerada (1–5) de los pasos clave "
-            "para completar el cuadrado rápidamente."
+            f"Problema: {context}\n"
+            f"Solución: \\({clean}\\)\n\n"
+            "Escribe los pasos de forma clara y breve, uno por línea, así:\n"
+            "1. …\n"
+            "2. …\n"
         )
         chat = client.chat.completions.create(
             model="gpt-4o-mini",
