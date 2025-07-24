@@ -16,7 +16,7 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG      = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
-SECTION_CONFIG   = {}  # fill this dict with your on/off flags as needed
+SECTION_CONFIG   = {}  # Rellena con tus on/off si lo necesitas
 PREGUNTA_CONFIG  = {i: 'off' for i in range(1, 61)}
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
@@ -45,7 +45,10 @@ HTML = '''<!doctype html>
     footer{margin-top:2rem;text-align:center;color:#666;font-size:0.9rem;}
   </style>
   <script>
-    window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$']]},svg:{fontCache:'global'}};
+    window.MathJax = {
+      tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$']] },
+      svg: { fontCache: 'global' }
+    };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
 </head>
@@ -87,7 +90,6 @@ HTML = '''<!doctype html>
 
   <div id="loader">⌛ Creando la mejor respuesta</div>
   <div class="answer" id="answer"></div>
-
   <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
 
   <script>
@@ -100,7 +102,7 @@ HTML = '''<!doctype html>
           pregEl    = form.elements['pregunta'],
           imageEl   = form.elements['image'];
 
-    // Disable selects & image when there's text
+    // 1) Si hay texto escrito, deshabilita selects e imagen
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
@@ -110,6 +112,26 @@ HTML = '''<!doctype html>
           else el.value = '';
         }
       });
+      // también quitar la obligatoriedad si la había
+      seccionEl.required = false;
+      pregEl.required    = false;
+    });
+
+    // 2) Si seleccionan Examen, deshabilita textarea e imagen y exige Sección y Pregunta
+    examenEl.addEventListener('change', () => {
+      const hasExam = examenEl.value !== '';
+      textoEl.disabled   = hasExam;
+      imageEl.disabled   = hasExam;
+      seccionEl.required = hasExam;
+      pregEl.required    = hasExam;
+      if (hasExam) {
+        textoEl.value = '';
+        imageEl.value = null;
+      } else {
+        // al deseleccionar examen, limpiar sección/pregunta
+        seccionEl.value = '';
+        pregEl.value    = '';
+      }
     });
 
     form.addEventListener('submit', async e => {
@@ -123,6 +145,12 @@ HTML = '''<!doctype html>
             hasImage     = imageEl.files.length > 0,
             isTextOnly   = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
 
+      // validación adicional en cliente
+      if (examenVal && (!seccionVal || !preguntaNum)) {
+        ansDiv.textContent = "Cuando seleccionas examen, debes elegir sección y pregunta.";
+        return;
+      }
+
       loader.textContent = isTextOnly
         ? '⌛ Resolviendo tu pregunta'
         : '⌛ Creando la mejor respuesta';
@@ -131,7 +159,7 @@ HTML = '''<!doctype html>
       let dots = 0;
       const iv = setInterval(() => {
         dots = (dots + 1) % 4;
-        loader.textContent += '.'.repeat(dots);
+        loader.textContent = loader.textContent.split('.')[0] + '.'.repeat(dots);
       }, 500);
 
       const resp = await fetch('/preguntar', {
@@ -185,6 +213,10 @@ def preguntar():
             "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
         ), 400
 
+    # server-side: si hay examen, exige sección y pregunta
+    if examen and not (seccion and pregunta_num):
+        return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
+
     # 4a) Create embedding
     try:
         if image_file and not texto:
@@ -204,11 +236,7 @@ def preguntar():
 
     # 4b) Pinecone lookup
     try:
-        pine = index.query(
-            vector=vector,
-            top_k=5,
-            include_metadata=True
-        )
+        pine = index.query(vector=vector, top_k=5, include_metadata=True)
         snippets = [
             m.metadata.get('text') or m.metadata.get('answer')
             for m in pine.matches
@@ -240,8 +268,8 @@ def preguntar():
         chat = client.chat.completions.create(
             model='gpt-4o-mini',
             messages=[
-                {'role': 'system', 'content': format_msg},
-                {'role': 'user',   'content': 'Por favor formatea la lista.'}
+                {'role':'system','content':format_msg},
+                {'role':'user',  'content':'Por favor formatea la lista.'}
             ]
         )
         formatted_list = chat.choices[0].message.content.strip()
@@ -262,6 +290,6 @@ def preguntar():
 if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
-        port=int(os.getenv('PORT', '8000')),
+        port=int(os.getenv('PORT','8000')),
         debug=False
     )
