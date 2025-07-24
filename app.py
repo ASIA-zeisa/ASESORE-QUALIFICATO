@@ -14,9 +14,9 @@ PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
-EXAM_CONFIG      = {i: 'off' for i in range(1, 61)}
+EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
-SECTION_OPTIONS  = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
+SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -45,7 +45,7 @@ HTML = '''<!doctype html>
   </style>
   <script>
     window.MathJax = {
-      tex: { inlineMath: [['$','$'], ['\\\\(','\\\\)']], displayMath: [['$$','$$']] },
+      tex: { inlineMath: [['$','$'], ['\\(','\\)']], displayMath: [['$$','$$']] },
       svg: { fontCache: 'global' }
     };
   </script>
@@ -219,51 +219,72 @@ def preguntar():
             "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
         ), 400
 
-    # server-side: if exam selected, require section & question
+    # if exam-based lookup, require section & question
     if examen and not (seccion and pregunta_num):
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
-    # 4a) Create embedding
-    try:
-        if image_file and not texto:
-            img_bytes = image_file.read()
-            emb = client.embeddings.create(
-                model='image-embedding-001',
-                input=base64.b64encode(img_bytes).decode()
+    # 4a) Lookup snippet by metadata if exam/section/question provided
+    raw_steps = []
+    if examen and seccion and pregunta_num:
+        try:
+            pine = index.query(
+                top_k=1,
+                include_metadata=True,
+                filter={
+                    "exam":      int(examen),
+                    "section":   seccion,
+                    "question":  int(pregunta_num)
+                }
             )
-        else:
-            emb = client.embeddings.create(
-                model='text-embedding-3-small',
-                input=texto
-            )
-        vector = emb.data[0].embedding
-    except Exception as e:
-        return f'Error de embedding: {e}', 500
+            if pine.matches:
+                meta = pine.matches[0].metadata
+                snippet = meta.get("text") or meta.get("answer")
+                if snippet:
+                    raw_steps = [snippet]
+            # else fall back below
+        except Exception:
+            raw_steps = []
 
-    # 4b) Pinecone lookup
-    try:
-        pine = index.query(vector=vector, top_k=5, include_metadata=True)
-        snippets = [
-            m.metadata.get('text') or m.metadata.get('answer')
-            for m in pine.matches
-            if m.metadata.get('text') or m.metadata.get('answer')
-        ]
-    except:
-        snippets = []
+    # 4b) If no metadata match, do embedding + similarity search
+    if not raw_steps:
+        try:
+            if image_file and not texto:
+                img_bytes = image_file.read()
+                emb = client.embeddings.create(
+                    model='image-embedding-001',
+                    input=base64.b64encode(img_bytes).decode()
+                )
+            else:
+                emb = client.embeddings.create(
+                    model='text-embedding-3-small',
+                    input=texto
+                )
+            vector = emb.data[0].embedding
+            pine = index.query(
+                vector=vector,
+                top_k=5,
+                include_metadata=True
+            )
+            raw_steps = [
+                m.metadata.get('text') or m.metadata.get('answer')
+                for m in pine.matches
+                if m.metadata.get('text') or m.metadata.get('answer')
+            ]
+        except Exception:
+            raw_steps = []
 
     # 4c) Wikipedia fallback
-    if not snippets:
+    if not raw_steps:
         try:
             wiki = requests.get(
                 'https://es.wikipedia.org/api/rest_v1/page/random/summary',
                 timeout=5
             ).json()
-            snippets = [wiki.get('extract', 'Lo siento, nada')]
+            raw_steps = [wiki.get('extract', 'Lo siento, nada')]
         except:
             return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
 
     # 4d) HTML formatting via LLM
-    raw_steps = snippets
     format_msg = (
         'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
         'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
