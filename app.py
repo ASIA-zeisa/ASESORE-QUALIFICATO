@@ -177,5 +177,8 @@ def preguntar():
     return response_fragment
 
 # ─── 5) Ejecuta servidor ──────────────────────────────────────────────────
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT','8000')))
+if __name__=='__main__':
+    # debug=True turns on the interactive debugger so you see the full stack
+    app.run(host='0.0.0.0',
+            port=int(os.getenv('PORT','8000')),
+            debug=True)
