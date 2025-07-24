@@ -20,7 +20,7 @@ SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
 # ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
-DUMMY_VECTOR = [0.0] * 1536  # <-- your Pinecone index has 1536 dimensions
+DUMMY_VECTOR = [0.0] * 1536  # your Pinecone index has 1536 dimensions
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -39,8 +39,10 @@ HTML = '''<!doctype html>
     h1{text-align:center;margin-bottom:1.2rem;}
     form{display:flex;flex-direction:column;gap:1rem;}
     .inline-selects{display:flex;gap:1rem;}
+    .select-group{display:flex;flex-direction:column;flex:1;}
+    .select-label{font-size:0.9rem;color:#666;text-align:left;margin-bottom:0.2rem;}
     textarea,select,button,input[type=file]{font-size:1rem;padding:0.6rem;}
-    select{flex:1;}
+    select{width:100%;}
     button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
     button:hover{background:#0e3c86;}
     #loader{margin-top:1rem;font-style:italic;display:none;}
@@ -61,23 +63,32 @@ HTML = '''<!doctype html>
     <textarea name="texto" rows="3" placeholder="Escribe tu pregunta aquí"></textarea>
     <label>— o selecciona tu pregunta:</label>
     <div class="inline-selects">
-      <select name="examen">
-        <option value="">Examen</option>
-        {% for num, status in exam_config.items()|sort %}
-          {% if status == 'on' %}
-            <option value="{{ num }}">{{ num }}</option>
-          {% endif %}
-        {% endfor %}
-      </select>
-      <select name="seccion">
-        <option value="">Sección</option>
-        {% for opt in section_options %}
-          <option value="{{ opt }}">{{ opt }}</option>
-        {% endfor %}
-      </select>
-      <select name="pregunta">
-        <option value="">Pregunta</option>
-      </select>
+      <div class="select-group">
+        <label class="select-label">Examen</label>
+        <select name="examen">
+          <option value="">Examen</option>
+          {% for num, status in exam_config.items()|sort %}
+            {% if status == 'on' %}
+              <option value="{{ num }}">{{ num }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+      <div class="select-group">
+        <label class="select-label">Sección</label>
+        <select name="seccion">
+          <option value="">Sección</option>
+          {% for opt in section_options %}
+            <option value="{{ opt }}">{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="select-group">
+        <label class="select-label">Pregunta</label>
+        <select name="pregunta">
+          <option value="">Pregunta</option>
+        </select>
+      </div>
     </div>
     <label>— o sube una imagen:</label>
     <input type="file" name="image">
@@ -105,7 +116,7 @@ HTML = '''<!doctype html>
       'Variable':    25
     };
 
-    // Disable selects & image if text is entered
+    // 1) si hay texto, deshabilita selects e imagen
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
       [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
@@ -116,7 +127,7 @@ HTML = '''<!doctype html>
       pregEl.required    = false;
     });
 
-    // If an exam is selected, disable text & image, require section+question
+    // 2) si seleccionan examen, deshabilita texto/imagen y exige sección+pregunta
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
       textoEl.disabled   = hasExam;
@@ -132,14 +143,13 @@ HTML = '''<!doctype html>
       }
     });
 
-    // Populate question dropdown based on section
+    // 3) repuebla pregunta al cambiar sección
     seccionEl.addEventListener('change', () => {
       const limit = preguntaLimits[seccionEl.value] || 0;
       pregEl.innerHTML = '<option value="">Pregunta</option>';
       for (let i = 1; i <= limit; i++) {
         const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = i;
+        opt.value = i; opt.textContent = i;
         pregEl.appendChild(opt);
       }
     });
@@ -147,7 +157,6 @@ HTML = '''<!doctype html>
     form.addEventListener('submit', async e => {
       e.preventDefault();
       ansDiv.innerHTML = '';
-
       const textoVal    = textoEl.value.trim(),
             examenVal   = examenEl.value,
             seccionVal  = seccionEl.value,
@@ -178,7 +187,6 @@ HTML = '''<!doctype html>
 
       clearInterval(iv);
       loader.style.display = 'none';
-
       const body = await resp.text();
       if (!resp.ok) ansDiv.textContent = body;
       else {
@@ -210,16 +218,12 @@ def preguntar():
 
     # block mixed inputs
     if texto and (examen or seccion or pregunta_num or image_file):
-        return (
-            "Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
-            "“Pregunta” ni subir imagen al mismo tiempo."
-        ), 400
+        return ("Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
+                "“Pregunta” ni subir imagen al mismo tiempo."), 400
 
     # require at least one input
     if not (texto or examen or seccion or pregunta_num or image_file):
-        return (
-            "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
-        ), 400
+        return ("Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."), 400
 
     # if exam-based lookup, require section & question
     if examen and not (seccion and pregunta_num):
@@ -245,26 +249,45 @@ def preguntar():
         except Exception:
             snippet = None
 
-    # 4b) If we got an exact snippet, wrap it manually
+    # 4b) If exact-match found, wrap and generate on-the-fly explanation
     if snippet:
         clean = snippet.strip('$')
-        formatted_list = f"<ol><li>\\({clean}\\)</li></ol>"
+        # prepare prompts
+        sys_p = "Eres un profesor de matemáticas que explica paso a paso en español."
+        # use user text if provided, else identify the exam/section/question
+        context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
+        usr_p = (
+            f"Hecho: {context}\n"
+            f"Respuesta: \\({clean}\\)\n\n"
+            "Explica detalladamente cómo llegas de la ecuación original a esa respuesta."
+        )
+        chat = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role":"system","content":sys_p},
+                {"role":"user","content":usr_p}
+            ]
+        )
+        explanation = chat.choices[0].message.content.strip()
+        formatted_list = (
+            f"<ol><li>\\({clean}\\)</li></ol>"
+            f"<p><strong>Explicación paso a paso:</strong> {explanation}</p>"
+        )
     else:
         # 4c) Fallback to embedding → similarity search
         try:
             if image_file and not texto:
                 img_bytes = image_file.read()
                 emb = client.embeddings.create(
-                    model='image-embedding-001',
+                    model="image-embedding-001",
                     input=base64.b64encode(img_bytes).decode()
                 )
             else:
                 emb = client.embeddings.create(
-                    model='text-embedding-3-small',
+                    model="text-embedding-3-small",
                     input=texto
                 )
             vector = emb.data[0].embedding
-
             pine = index.query(
                 vector=vector,
                 top_k=5,
@@ -301,7 +324,7 @@ def preguntar():
                 model='gpt-4o-mini',
                 messages=[
                     {'role':'system','content':format_msg},
-                    {'role':'user',  'content':'Por favor formatea la lista.'}
+                    {'role':'user','content':'Por favor formatea la lista.'}
                 ]
             )
             formatted_list = chat.choices[0].message.content.strip()
@@ -320,8 +343,4 @@ def preguntar():
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(
-        host='0.0.0.0',
-        port=int(os.getenv('PORT','8000')),
-        debug=False
-    )
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT','8000')), debug=False)
