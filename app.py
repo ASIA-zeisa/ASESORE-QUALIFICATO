@@ -14,10 +14,10 @@ PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
-EXAM_CONFIG = {i: 'off' for i in range(1, 61)}
+EXAM_CONFIG      = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
-SECTION_CONFIG = {}
-PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
+SECTION_CONFIG   = {}  # fill this dict with your on/off flags as needed
+PREGUNTA_CONFIG  = {i: 'off' for i in range(1, 61)}
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -57,20 +57,26 @@ HTML = '''<!doctype html>
     <div class="inline-selects">
       <select name="examen">
         <option value="">Examen</option>
-        {% for num,status in exam_config.items()|sort %}
-          {% if status=='on' %}<option value="{{num}}">{{num}}</option>{% endif %}
+        {% for num, status in exam_config.items()|sort %}
+          {% if status == 'on' %}
+            <option value="{{ num }}">{{ num }}</option>
+          {% endif %}
         {% endfor %}
       </select>
       <select name="seccion">
         <option value="">Sección</option>
-        {% for key,status in section_config.items()|sort %}
-          {% if status=='on' %}<option value="{{key}}">{{key}}</option>{% endif %}
+        {% for key, status in section_config.items()|sort %}
+          {% if status == 'on' %}
+            <option value="{{ key }}">{{ key }}</option>
+          {% endif %}
         {% endfor %}
       </select>
       <select name="pregunta">
         <option value="">Pregunta</option>
-        {% for num,status in pregunta_config.items()|sort %}
-          {% if status=='on' %}<option value="{{num}}">{{num}}</option>{% endif %}
+        {% for num, status in pregunta_config.items()|sort %}
+          {% if status == 'on' %}
+            <option value="{{ num }}">{{ num }}</option>
+          {% endif %}
         {% endfor %}
       </select>
     </div>
@@ -78,23 +84,26 @@ HTML = '''<!doctype html>
     <input type="file" name="image">
     <button type="submit">Enviar</button>
   </form>
+
   <div id="loader">⌛ Creando la mejor respuesta</div>
   <div class="answer" id="answer"></div>
-  <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
-  <script>
-    const form = document.getElementById('qform');
-    const loader = document.getElementById('loader');
-    const ansDiv = document.getElementById('answer');
-    const textoEl = form.elements['texto'];
-    const examenEl = form.elements['examen'];
-    const seccionEl = form.elements['seccion'];
-    const preguntaEl = form.elements['pregunta'];
-    const imageEl = form.elements['image'];
 
-    // Disable selects and file upload when there's text
+  <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
+
+  <script>
+    const form      = document.getElementById('qform'),
+          loader    = document.getElementById('loader'),
+          ansDiv    = document.getElementById('answer'),
+          textoEl   = form.elements['texto'],
+          examenEl  = form.elements['examen'],
+          seccionEl = form.elements['seccion'],
+          pregEl    = form.elements['pregunta'],
+          imageEl   = form.elements['image'];
+
+    // Disable selects & image when there's text
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
-      [examenEl, seccionEl, preguntaEl, imageEl].forEach(el => {
+      [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
         el.disabled = hasText;
         if (hasText) {
           if (el.tagName.toLowerCase() === 'input') el.value = null;
@@ -106,27 +115,39 @@ HTML = '''<!doctype html>
     form.addEventListener('submit', async e => {
       e.preventDefault();
       ansDiv.innerHTML = '';
-      const textoVal = textoEl.value.trim();
-      const examenVal = examenEl.value;
-      const seccionVal = seccionEl.value;
-      const preguntaVal = preguntaEl.value;
-      const hasImage = imageEl.files.length > 0;
-      const isTextOnly = textoVal && !examenVal && !seccionVal && !preguntaVal && !hasImage;
-      const baseMsg = isTextOnly ? '⌛ Resolviendo tu pregunta' : '⌛ Creando la mejor respuesta';
-      loader.textContent = baseMsg;
+
+      const textoVal     = textoEl.value.trim(),
+            examenVal    = examenEl.value,
+            seccionVal   = seccionEl.value,
+            preguntaNum  = pregEl.value,
+            hasImage     = imageEl.files.length > 0,
+            isTextOnly   = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
+
+      loader.textContent = isTextOnly
+        ? '⌛ Resolviendo tu pregunta'
+        : '⌛ Creando la mejor respuesta';
       loader.style.display = 'block';
+
       let dots = 0;
       const iv = setInterval(() => {
         dots = (dots + 1) % 4;
-        loader.textContent = baseMsg + '.'.repeat(dots);
+        loader.textContent += '.'.repeat(dots);
       }, 500);
 
-      const resp = await fetch('/preguntar', { method: 'POST', body: new FormData(form) });
+      const resp = await fetch('/preguntar', {
+        method: 'POST',
+        body: new FormData(form)
+      });
+
       clearInterval(iv);
       loader.style.display = 'none';
+
       const body = await resp.text();
       if (!resp.ok) ansDiv.textContent = body;
-      else { ansDiv.innerHTML = body; MathJax.typeset(); }
+      else {
+        ansDiv.innerHTML = body;
+        MathJax.typeset();
+      }
     });
   </script>
 </body>
@@ -135,33 +156,38 @@ HTML = '''<!doctype html>
 # ─── 3) Home route ───────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def home():
-    return render_template_string(HTML,
-                                  exam_config=EXAM_CONFIG,
-                                  section_config=SECTION_CONFIG,
-                                  pregunta_config=PREGUNTA_CONFIG)
+    return render_template_string(
+        HTML,
+        exam_config=EXAM_CONFIG,
+        section_config=SECTION_CONFIG,
+        pregunta_config=PREGUNTA_CONFIG
+    )
 
 # ─── 4) Handle question ──────────────────────────────────────────────────
 @app.route('/preguntar', methods=['POST'])
 def preguntar():
-    # — your new “texto” field —
-    texto      = (request.form.get('texto') or "").strip()
-    examen     = request.form.get('examen')
-    seccion    = request.form.get('seccion')
-    pregunta_n = request.form.get('pregunta')
-    image_file = request.files.get('image')
+    texto        = (request.form.get('texto') or "").strip()
+    examen       = request.form.get('examen')
+    seccion      = request.form.get('seccion')
+    pregunta_num = request.form.get('pregunta')
+    image_file   = request.files.get('image')
 
-    # — block mixed inputs: if the user wrote text, they can’t pick examen/seccion/pregunta nor upload image —
-    if texto and (examen or seccion or pregunta_n or image_file):
-        return ("Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, “Pregunta” "
-                "ni subir una imagen al mismo tiempo."), 400
+    # block mixed inputs
+    if texto and (examen or seccion or pregunta_num or image_file):
+        return (
+            "Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
+            "“Pregunta” ni subir imagen al mismo tiempo."
+        ), 400
 
-    # — existing “must provide something” check —
-    if not (texto or examen or seccion or pregunta_n or image_file):
-        return "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen.", 400
+    # require at least one input
+    if not (texto or examen or seccion or pregunta_num or image_file):
+        return (
+            "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
+        ), 400
 
     # 4a) Create embedding
     try:
-        if image_file and !texto:
+        if image_file and not texto:
             img_bytes = image_file.read()
             emb = client.embeddings.create(
                 model='image-embedding-001',
@@ -178,10 +204,16 @@ def preguntar():
 
     # 4b) Pinecone lookup
     try:
-        pine = index.query(vector=vector, top_k=5, include_metadata=True)
-        snippets = [m.metadata.get('text') or m.metadata.get('answer')
-                    for m in pine.matches
-                    if m.metadata.get('text') or m.metadata.get('answer')]
+        pine = index.query(
+            vector=vector,
+            top_k=5,
+            include_metadata=True
+        )
+        snippets = [
+            m.metadata.get('text') or m.metadata.get('answer')
+            for m in pine.matches
+            if m.metadata.get('text') or m.metadata.get('answer')
+        ]
     except:
         snippets = []
 
@@ -196,22 +228,27 @@ def preguntar():
         except:
             return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
 
-    # 4d) Format via LLM
+    # 4d) HTML formatting via LLM
     raw_steps = snippets
     format_msg = (
-        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto adicional. Usa siempre los delimitadores LaTeX \\\(…\\\) para las fórmulas.\n\n'
+        'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
+        'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
+        'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
         + '\n'.join(f'- {s}' for s in raw_steps)
     )
     try:
         chat = client.chat.completions.create(
             model='gpt-4o-mini',
-            messages=[{'role':'system','content':format_msg}, {'role':'user','content':'Por favor formatea la lista.'}]
+            messages=[
+                {'role': 'system', 'content': format_msg},
+                {'role': 'user',   'content': 'Por favor formatea la lista.'}
+            ]
         )
         formatted_list = chat.choices[0].message.content.strip()
     except Exception as e:
         return f'Error de formateo: {e}', 500
 
-    # 4e) Build response
+    # 4e) Build and return response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
@@ -223,4 +260,8 @@ def preguntar():
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', '8000')), debug=False)
+    app.run(
+        host='0.0.0.0',
+        port=int(os.getenv('PORT', '8000')),
+        debug=False
+    )
