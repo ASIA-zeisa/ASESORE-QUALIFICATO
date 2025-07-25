@@ -316,6 +316,8 @@ def preguntar():
         except Exception as e:
             return f'Error de formateo: {e}', 500
 
+    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")  
+  
     # 4f) Return response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
