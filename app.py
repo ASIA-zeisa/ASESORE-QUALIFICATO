@@ -1,10 +1,21 @@
 import os
+import re
 import base64
 import requests
 from flask import Flask, request, render_template_string
 from pinecone import Pinecone
 from openai import OpenAI
 from dotenv import load_dotenv
+
+# ─── Helper: wrap stray LaTeX commands in \( … \) ─────────────────────────
+def wrap_tex(text: str) -> str:
+    """
+    Envuelve cualquier \frac, \sqrt, \left, \right, \sum, \int,
+    o cualquier \comando LaTeX que no esté ya entre delimitadores,
+    dentro de \( … \).
+    """
+    pattern = r'(\\(?:frac|sqrt|left|right|sum|int|[A-Za-z]+)\b[^\\\)\]]*)'
+    return re.sub(pattern, r'\\(\1\\)', text)
 
 # ─── 0) Load env vars ─────────────────────────────────────────────────────
 load_dotenv()
@@ -14,13 +25,24 @@ PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
-EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
-EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off', 6: 'off', 7: 'off', 8: 'off', 9: 'off', 10: 'off', 11: 'off', 12: 'off', 13: 'off', 14: 'off', 15: 'off', 16: 'off', 17: 'off', 18: 'off', 19: 'off', 20: 'off', 21: 'off', 22: 'off', 23: 'off', 24: 'off', 25: 'off', 26: 'off', 27: 'off', 28: 'off', 29: 'off', 30: 'off', 31: 'off', 32: 'off', 33: 'off', 34: 'off', 35: 'off', 36: 'off', 37: 'off', 38: 'off', 39: 'off', 40: 'off', 41: 'off', 42: 'off', 43: 'off', 44: 'off', 45: 'off', 46: 'off', 47: 'off', 48: 'off', 49: 'off', 50: 'off', 51: 'off', 52: 'off', 53: 'off', 54: 'off', 55: 'off', 56: 'off', 57: 'off', 58: 'off', 59: 'off', 60: 'off', 61: 'off', 62: 'off', 63: 'off', 64: 'off', 65: 'off', 66: 'off', 67: 'on', 68: 'off', 69: 'off', 70: 'off'})
+EXAM_CONFIG = {i: 'off' for i in range(1, 71)}
+EXAM_CONFIG.update({
+    1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off', 6: 'off', 7: 'off',
+    8: 'off', 9: 'off',10: 'off',11: 'off',12: 'off',13: 'off',14: 'off',
+   15: 'off',16: 'off',17: 'off',18: 'off',19: 'off',20: 'off',21: 'off',
+   22: 'off',23: 'off',24: 'off',25: 'off',26: 'off',27: 'off',28: 'off',
+   29: 'off',30: 'off',31: 'off',32: 'off',33: 'off',34: 'off',35: 'off',
+   36: 'off',37: 'off',38: 'off',39: 'off',40: 'off',41: 'off',42: 'off',
+   43: 'off',44: 'off',45: 'off',46: 'off',47: 'off',48: 'off',49: 'off',
+   50: 'off',51: 'off',52: 'off',53: 'off',54: 'off',55: 'off',56: 'off',
+   57: 'off',58: 'off',59: 'off',60: 'off',61: 'off',62: 'off',63: 'off',
+   64: 'off',65: 'off',66: 'off',67: 'on',68: 'off',69: 'off',70: 'off'
+})
 SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
 # ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
-DUMMY_VECTOR = [0.0] * 1536  # your Pinecone index has 1536 dimensions
+DUMMY_VECTOR = [0.0] * 1536
 
 # ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
 pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
@@ -97,11 +119,9 @@ HTML = '''<!doctype html>
     <input type="file" name="image">
     <button type="submit">Enviar</button>
   </form>
-
   <div id="loader">⌛ Creando la mejor respuesta</div>
   <div class="answer" id="answer"></div>
   <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
-
   <script>
     const form      = document.getElementById('qform'),
           loader    = document.getElementById('loader'),
@@ -111,81 +131,68 @@ HTML = '''<!doctype html>
           seccionEl = form.elements['seccion'],
           pregEl    = form.elements['pregunta'],
           imageEl   = form.elements['image'];
-
     const preguntaLimits = {
       'Lectura':     45,
       'Redacción':   25,
       'Matemáticas': 55,
       'Variable':    25
     };
-
     textoEl.addEventListener('input', () => {
       const hasText = textoEl.value.trim().length > 0;
-      [examenEl, seccionEl, pregEl, imageEl].forEach(el => {
-        el.disabled = hasText; if (hasText) el.value = '';
+      [examenEl,seccionEl,pregEl,imageEl].forEach(el => {
+        el.disabled = hasText; if(hasText) el.value = '';
       });
       seccionEl.required = false; pregEl.required = false;
     });
-
     examenEl.addEventListener('change', () => {
       const hasExam = examenEl.value !== '';
       textoEl.disabled = hasExam; imageEl.disabled = hasExam;
       seccionEl.required = hasExam; pregEl.required = hasExam;
-      if (hasExam) { textoEl.value = ''; imageEl.value = null; }
-      else { seccionEl.value = ''; pregEl.value = ''; }
+      if(hasExam){ textoEl.value=''; imageEl.value=null; }
+      else{ seccionEl.value=''; pregEl.value=''; }
     });
-
     seccionEl.addEventListener('change', () => {
-      const limit = preguntaLimits[seccionEl.value] || 0;
+      const limit = preguntaLimits[seccionEl.value]||0;
       pregEl.innerHTML = '<option value="">Pregunta</option>';
-      for (let i = 1; i <= limit; i++) {
+      for(let i=1;i<=limit;i++){
         const opt = document.createElement('option');
-        opt.value = i; opt.textContent = i;
-        pregEl.appendChild(opt);
+        opt.value=i; opt.textContent=i; pregEl.appendChild(opt);
       }
     });
-
     form.addEventListener('submit', async e => {
-      e.preventDefault(); ansDiv.innerHTML = '';
+      e.preventDefault(); ansDiv.innerHTML='';
       const textoVal    = textoEl.value.trim(),
             examenVal   = examenEl.value,
             seccionVal  = seccionEl.value,
             preguntaNum = pregEl.value,
-            hasImage    = imageEl.files.length > 0,
-            isTextOnly  = textoVal && !examenVal && !seccionVal && !preguntaNum && !hasImage;
-
-      if (examenVal && (!seccionVal || !preguntaNum)) {
-        ansDiv.textContent = "Cuando seleccionas examen, debes elegir sección y pregunta.";
+            hasImage    = imageEl.files.length>0,
+            isTextOnly  = textoVal&&!examenVal&&!seccionVal&&!preguntaNum&&!hasImage;
+      if(examenVal&&(!seccionVal||!preguntaNum)){
+        ansDiv.textContent="Cuando seleccionas examen, debes elegir sección y pregunta.";
         return;
       }
       loader.textContent = isTextOnly
         ? '⌛ Resolviendo tu pregunta'
         : '⌛ Creando la mejor respuesta';
-      loader.style.display = 'block';
-
-      let dots = 0;
-      const iv = setInterval(() => {
-        dots = (dots + 1) % 4;
-        loader.textContent = loader.textContent.split('.')[0] + '.'.repeat(dots);
-      }, 500);
-
-      const resp = await fetch('/preguntar', {
-        method: 'POST', body: new FormData(form)
-      });
-      clearInterval(iv); loader.style.display = 'none';
+      loader.style.display='block';
+      let dots=0;
+      const iv = setInterval(()=>{
+        dots=(dots+1)%4;
+        loader.textContent=loader.textContent.split('.')[0]+'.'.repeat(dots);
+      },500);
+      const resp = await fetch('/preguntar',{method:'POST',body:new FormData(form)});
+      clearInterval(iv); loader.style.display='none';
       const body = await resp.text();
-      if (!resp.ok) ansDiv.textContent = body;
-      else { ansDiv.innerHTML = body; MathJax.typeset(); }
+      if(!resp.ok) ansDiv.textContent=body;
+      else { ansDiv.innerHTML=body; MathJax.typeset(); }
     });
   </script>
-</body>
 </html>'''
 
 # ─── 3) Home route ───────────────────────────────────────────────────────
 @app.route('/', methods=['GET'])
 def home():
-    return render_template_string(
-        HTML,
+    return render_template_string(HTML,
         exam_config     = EXAM_CONFIG,
         section_options = SECTION_OPTIONS
     )
@@ -242,8 +249,8 @@ def preguntar():
         )
         context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
         user_prompt = (
-            f"Ecuación: {context}\n"
-            f"Respuesta: \\({clean}\\)\n\n"
+            f"Ecuación: {context}\\n"
+            f"Respuesta: \\({clean}\\)\\n\\n"
             "Proporciona una lista numerada (1–5) de los pasos clave "
             "para completar el cuadrado rápidamente."
         )
@@ -254,14 +261,13 @@ def preguntar():
                 {"role":"user","content":user_prompt}
             ]
         )
-        explanation = chat.choices[0].message.content.strip()
         formatted_list = (
             f"<ol><li>\\({clean}\\)</li></ol>"
             f"<p><strong>Pasos rápidos:</strong></p>"
-            f"{explanation}"
+            + chat.choices[0].message.content.strip()
         )
     else:
-        # 4c) Fallback: embedding → similarity → LLM formatter
+        # 4c) Fallback: embedding & similarity
         try:
             if image_file and not texto:
                 img_bytes = image_file.read()
@@ -301,8 +307,8 @@ def preguntar():
         format_msg = (
             'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
             'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
-            'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\n\n'
-            + '\n'.join(f'- {s}' for s in raw_steps)
+            'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\\n\\n'
+            + '\\n'.join(f'- {s}' for s in raw_steps)
         )
         try:
             chat = client.chat.completions.create(
@@ -316,8 +322,10 @@ def preguntar():
         except Exception as e:
             return f'Error de formateo: {e}', 500
 
-    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")  
-  
+    # ─── Post-processing: wrap LaTeX & normalize delimiters ───────────────
+    formatted_list = wrap_tex(formatted_list)
+    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")
+
     # 4f) Return response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
