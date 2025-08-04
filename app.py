@@ -16,7 +16,7 @@ CUSTOM_GPT_MODEL   = os.getenv("CUSTOM_GPT_MODEL")   # p.ej. "gpt-4o-tu-PAA-comp
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
-EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
+EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'on', 4: 'on', 5: 'on', 185: 'on'})
 SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 
 # ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
