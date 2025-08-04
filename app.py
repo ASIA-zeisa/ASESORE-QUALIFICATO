@@ -7,14 +7,12 @@ from pinecone import Pinecone
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# ─── Helper: wrap stray LaTeX commands in \( … \) ─────────────────────────
+# ─── Helper: wrap only \frac and \sqrt in \(…\) ───────────────────────────
 def wrap_tex(text: str) -> str:
     """
-    Envuelve cualquier \frac, \sqrt, \left, \right, \sum, \int,
-    o cualquier \comando LaTeX que no esté ya entre delimitadores,
-    dentro de \( … \).
+    Envuelve únicamente \frac{…} y \sqrt{…} en delimitadores MathJax \( … \).
     """
-    pattern = r'(\\(?:frac|sqrt|left|right|sum|int|[A-Za-z]+)\b[^\\\)\]]*)'
+    pattern = r'(\\(?:frac|sqrt)\{[^}]+\})'
     return re.sub(pattern, r'\\(\1\\)', text)
 
 # ─── 0) Load env vars ─────────────────────────────────────────────────────
@@ -187,6 +185,7 @@ HTML = '''<!doctype html>
       else { ansDiv.innerHTML=body; MathJax.typeset(); }
     });
   </script>
+</body>
 </html>'''
 
 # ─── 3) Home route ───────────────────────────────────────────────────────
@@ -245,12 +244,12 @@ def preguntar():
         system_prompt = (
             "Eres un profesor de matemáticas que explica de forma muy concisa "
             "en español, en no más de 5 pasos numerados, usando delimitadores "
-            "\\(…\\) para las expresiones matemáticas."
+            "$…$ para las expresiones matemáticas."
         )
         context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
         user_prompt = (
             f"Ecuación: {context}\\n"
-            f"Respuesta: \\({clean}\\)\\n\\n"
+            f"Respuesta: ${clean}$\\n\\n"
             "Proporciona una lista numerada (1–5) de los pasos clave "
             "para completar el cuadrado rápidamente."
         )
@@ -262,7 +261,7 @@ def preguntar():
             ]
         )
         formatted_list = (
-            f"<ol><li>\\({clean}\\)</li></ol>"
+            f"<ol><li>${clean}$</li></ol>"
             f"<p><strong>Pasos rápidos:</strong></p>"
             + chat.choices[0].message.content.strip()
         )
@@ -307,7 +306,7 @@ def preguntar():
         format_msg = (
             'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
             'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
-            'adicional. Usa siempre los delimitadores LaTeX \\(…\\) para las fórmulas.\\n\\n'
+            'adicional. Usa siempre los delimitadores LaTeX $…$ para las fórmulas.\\n\\n'
             + '\\n'.join(f'- {s}' for s in raw_steps)
         )
         try:
@@ -322,9 +321,8 @@ def preguntar():
         except Exception as e:
             return f'Error de formateo: {e}', 500
 
-    # ─── Post-processing: wrap LaTeX & normalize delimiters ───────────────
-    formatted_list = wrap_tex(formatted_list)
-    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")
+    # ─── Post-processing: ya sin envoltorios extra ──────────────────────────
+    # (No llamamos a wrap_tex ni reemplazamos delimitadores aquí)
 
     # 4f) Return response
     response_fragment = (
@@ -338,6 +336,8 @@ def preguntar():
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(host='0.0.0.0',
-            port=int(os.getenv('PORT','8000')),
-            debug=False)
+    app.run(
+        host='0.0.0.0',
+        port=int(os.getenv('PORT', '8000')),
+        debug=False
+    )
