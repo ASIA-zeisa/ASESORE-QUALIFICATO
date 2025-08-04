@@ -8,24 +8,16 @@ from dotenv import load_dotenv
 
 # ─── 0) Load env vars ─────────────────────────────────────────────────────
 load_dotenv()
-PINECONE_API_KEY   = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV       = os.getenv("PINECONE_ENV")
-PINECONE_INDEX     = os.getenv("PINECONE_INDEX")
-OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY")
-CUSTOM_GPT_MODEL   = os.getenv("CUSTOM_GPT_MODEL")
-
-# ─── 0.1) Custom GPT system prompt ─────────────────────────────────────────
-SYSTEM_PROMPT_CUSTOM = (
-    "Eres un profesor de matemáticas experto en PAA que tiene TODAS las "
-    "preguntas y respuestas de todos los exámenes. Cuando te den Examen X, "
-    "Sección Y, Pregunta Z, reproduce la pregunta exacta y explica la solución "
-    "en 5 pasos numerados usando delimitadores \\(…\\). Responde siempre en español."
-)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV     = os.getenv("PINECONE_ENV")
+PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
+OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
 EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
 SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
+PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
 # ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
 DUMMY_VECTOR = [0.0] * 1536  # your Pinecone index has 1536 dimensions
@@ -209,34 +201,18 @@ def preguntar():
 
     # block mixed inputs
     if texto and (examen or seccion or pregunta_num or image_file):
-        return (
-            "Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
-            "“Pregunta” ni subir imagen al mismo tiempo."
-        ), 400
+        return ("Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
+                "“Pregunta” ni subir imagen al mismo tiempo."), 400
 
     # require at least one input
     if not (texto or examen or seccion or pregunta_num or image_file):
-        return (
-            "Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."
-        ), 400
+        return ("Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."), 400
 
     # if exam-based lookup, require section & question
     if examen and not (seccion and pregunta_num):
         return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
 
-    # ─── 4a) Exam branch: custom GPT ─────────────────────────────────────────
-    if examen and seccion and pregunta_num and not texto and not image_file:
-        user_prompt = f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}."
-        chat = client.chat.completions.create(
-            model=CUSTOM_GPT_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_CUSTOM},
-                {"role": "user",   "content": user_prompt}
-            ]
-        )
-        return chat.choices[0].message.content.strip()
-
-    # ─── 4b) Fallback branch: Pinecone + embeddings + LLM formatter ─────────
+    # 4a) Exact-match lookup by metadata
     snippet = None
     if examen and seccion and pregunta_num:
         try:
@@ -256,6 +232,7 @@ def preguntar():
         except Exception:
             snippet = None
 
+    # 4b) If exact-match found, wrap & generate concise explanation
     if snippet:
         clean = snippet.strip('$')
         system_prompt = (
@@ -263,7 +240,7 @@ def preguntar():
             "en español, en no más de 5 pasos numerados, usando delimitadores "
             "\\(…\\) para las expresiones matemáticas."
         )
-        context = f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
+        context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
         user_prompt = (
             f"Ecuación: {context}\n"
             f"Respuesta: \\({clean}\\)\n\n"
@@ -284,6 +261,7 @@ def preguntar():
             f"{explanation}"
         )
     else:
+        # 4c) Fallback: embedding → similarity → LLM formatter
         try:
             if image_file and not texto:
                 img_bytes = image_file.read()
@@ -338,7 +316,9 @@ def preguntar():
         except Exception as e:
             return f'Error de formateo: {e}', 500
 
-    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")
+    formatted_list = formatted_list.replace("\\[", "\\(").replace("\\]", "\\)")  
+  
+    # 4f) Return response
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
@@ -350,8 +330,6 @@ def preguntar():
 
 # ─── 5) Run server ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    app.run(
-        host='0.0.0.0',
-        port=int(os.getenv('PORT','8000')),
-        debug=False
-    )
+    app.run(host='0.0.0.0',
+            port=int(os.getenv('PORT','8000')),
+            debug=False)
