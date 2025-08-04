@@ -15,7 +15,7 @@ OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
 
 # ─── 0.5) Activation config ──────────────────────────────────────────────
 EXAM_CONFIG     = {i: 'off' for i in range(1, 61)}
-EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off'})
+EXAM_CONFIG.update({1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off', 6: 'off', 7: 'off', 8: 'off', 9: 'off', 10: 'off', 11: 'off', 12: 'off', 13: 'off', 14: 'off', 15: 'off', 16: 'off', 17: 'off', 18: 'off', 19: 'off', 20: 'off', 21: 'off', 22: 'off', 23: 'off', 24: 'off', 25: 'off', 26: 'off', 27: 'off', 28: 'off', 29: 'off', 30: 'off', 31: 'off', 32: 'off', 33: 'off', 34: 'off', 35: 'off', 36: 'off', 37: 'off', 38: 'off', 39: 'off', 40: 'off', 41: 'off', 42: 'off', 43: 'off', 44: 'off', 45: 'off', 46: 'off', 47: 'off', 48: 'off', 49: 'off', 50: 'off', 51: 'off', 52: 'off', 53: 'off', 54: 'off', 55: 'off', 56: 'off', 57: 'off', 58: 'off', 59: 'off', 60: 'off', 61: 'off', 62: 'off', 63: 'off', 64: 'off', 65: 'off', 66: 'off', 67: 'on', 68: 'off', 69: 'off', 70: 'off'})
 SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
 PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
