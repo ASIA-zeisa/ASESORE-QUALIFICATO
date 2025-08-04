@@ -7,13 +7,17 @@ from pinecone import Pinecone
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# ─── Helper: wrap only \frac and \sqrt in \(…\) ───────────────────────────
+# ─── Helper: wrap \left…\right y \frac, \sqrt en delimitadores $…$ ──────────
 def wrap_tex(text: str) -> str:
     """
-    Envuelve únicamente \frac{…} y \sqrt{…} en delimitadores MathJax \( … \).
+    Envuelve secuencias \left(...)\right, \frac{…} y \sqrt{…}
+    dentro de delimitadores $…$ para que MathJax las reconozca.
     """
-    pattern = r'(\\(?:frac|sqrt)\{[^}]+\})'
-    return re.sub(pattern, r'\\(\1\\)', text)
+    # 1) Envuelve cualquier \left(...)\right completo
+    text = re.sub(r'(\\left\([^\)]*\\right\))', r'$\1$', text)
+    # 2) Envuelve \frac{…} y \sqrt{…}
+    text = re.sub(r'(\\(?:frac|sqrt)\{[^}]+\})', r'$\1$', text)
+    return text
 
 # ─── 0) Load env vars ─────────────────────────────────────────────────────
 load_dotenv()
