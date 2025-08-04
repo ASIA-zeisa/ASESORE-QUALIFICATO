@@ -66,7 +66,6 @@ HTML = '''<!doctype html>
     .inline-selects{display:flex;gap:1rem;}
     .select-group{display:flex;flex-direction:column;flex:1;}
     .select-label{font-size:0.9rem;color:#666;text-align:left;margin-bottom:0.2rem;}
-    ol li { margin-bottom: 1em; }
     textarea,select,button,input[type=file]{font-size:1rem;padding:0.6rem;}
     select{width:100%;}
     button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
@@ -331,6 +330,7 @@ def preguntar():
     # (No llamamos a wrap_tex ni reemplazamos delimitadores aquí)
 
     # 4f) Return response
+    formatted_list = formatted_list.replace('</li>', '</li><br><br>')
     response_fragment = (
         f"<p><strong>Enunciado:</strong> {texto}</p>"
         f"<p><strong>Examen:</strong> {examen}</p>"
