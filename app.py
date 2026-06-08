@@ -1,349 +1,567 @@
+import hashlib
 import os
-import re
-import base64
-import requests
-from flask import Flask, request, render_template_string
-from pinecone import Pinecone
-from openai import OpenAI
+from itertools import product
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
-
-# ─── Helper: wrap \left…\right y \frac, \sqrt en delimitadores \( … \) ───
-def wrap_tex(text: str) -> str:
-    """
-    Envuelve secuencias \left(...)\right, \frac{…} y \sqrt{…}
-    dentro de delimitadores \( … \) para que MathJax las reconozca.
-    """
-    # 1) Envuelve cualquier \left(...)\right completo
-    text = re.sub(r'(\\left\([^\)]*\\right\))', r'\\(\1\\)', text)
-    # 2) Envuelve \frac{…} y \sqrt{…}
-    text = re.sub(r'(\\(?:frac|sqrt)\{[^}]+\})', r'\\(\1\\)', text)
-    return text
+from flask import Flask, render_template_string, request, url_for
+from pinecone import Pinecone
 
 
-# ─── 0) Load env vars ─────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Configuración
+# ---------------------------------------------------------------------------
+
 load_dotenv()
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV     = os.getenv("PINECONE_ENV")
-PINECONE_INDEX   = os.getenv("PINECONE_INDEX")
-OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "asesor1")
+PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "preguntas")
 
-# ─── 0.5) Activation config ──────────────────────────────────────────────
-EXAM_CONFIG = {i: 'off' for i in range(1, 71)}
+if not PINECONE_API_KEY:
+    raise RuntimeError("Falta la variable de entorno PINECONE_API_KEY.")
+
+# Conserva el control de exámenes activos del proyecto anterior.
+EXAM_CONFIG = {i: "off" for i in range(1, 71)}
 EXAM_CONFIG.update({
-    1: 'on', 2: 'on', 3: 'off', 4: 'off', 5: 'off', 6: 'off', 7: 'off',
-    8: 'off', 9: 'off',10: 'off',11: 'off',12: 'off',13: 'off',14: 'off',
-   15: 'off',16: 'off',17: 'off',18: 'off',19: 'off',20: 'off',21: 'off',
-   22: 'off',23: 'off',24: 'off',25: 'off',26: 'off',27: 'off',28: 'off',
-   29: 'off',30: 'off',31: 'off',32: 'off',33: 'off',34: 'off',35: 'off',
-   36: 'off',37: 'off',38: 'off',39: 'off',40: 'off',41: 'off',42: 'off',
-   43: 'off',44: 'off',45: 'off',46: 'off',47: 'off',48: 'off',49: 'off',
-   50: 'off',51: 'off',52: 'off',53: 'off',54: 'off',55: 'off',56: 'off',
-   57: 'off',58: 'off',59: 'off',60: 'off',61: 'off',62: 'off',63: 'off',
-   64: 'off',65: 'off',66: 'off',67: 'on',68: 'off',69: 'off',70: 'off'
+    1: "on",
+    2: "on",
+    67: "on",
 })
-SECTION_OPTIONS = ['Lectura', 'Redacción', 'Matemáticas', 'Variable']
-PREGUNTA_CONFIG = {i: 'off' for i in range(1, 61)}
 
-# ─── 0.7) Dummy vector for filter-only queries — must match index dimensions
-DUMMY_VECTOR = [0.0] * 1536
+# El valor enviado por la interfaz es numérico, pero el backend también prueba
+# los nombres anteriores para mantener compatibilidad con el Excel.
+SECTION_CONFIG = {
+    "1": {
+        "label": "Sección 1 — Lectura",
+        "limit": 45,
+        "aliases": ["1", "Sección 1", "Lectura"],
+    },
+    "2": {
+        "label": "Sección 2 — Redacción",
+        "limit": 25,
+        "aliases": ["2", "Sección 2", "Redacción"],
+    },
+    "3": {
+        "label": "Sección 3 — Matemáticas",
+        "limit": 55,
+        "aliases": ["3", "Sección 3", "Matemáticas"],
+    },
+    "4": {
+        "label": "Sección 4 — Variable",
+        "limit": 25,
+        "aliases": ["4", "Sección 4", "Variable"],
+    },
+}
 
-# ─── 1) Init Pinecone & OpenAI ────────────────────────────────────────────
-pc     = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index  = pc.Index(PINECONE_INDEX)
-client = OpenAI(api_key=OPENAI_API_KEY)
-app    = Flask(__name__)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(PINECONE_INDEX)
+app = Flask(__name__)
 
-# ─── 2) HTML + MathJax setup ──────────────────────────────────────────────
-HTML = '''<!doctype html>
+
+# ---------------------------------------------------------------------------
+# Funciones compatibles con Ocelote
+# ---------------------------------------------------------------------------
+
+def crear_id(examen: str, seccion: str, pregunta: str) -> str:
+    """Reproduce exactamente la ID determinista generada por Ocelote."""
+    clave = f"{examen}|{seccion}|{pregunta}".casefold().strip()
+    digest = hashlib.sha256(clave.encode("utf-8")).hexdigest()[:24]
+    return f"pregunta-{digest}"
+
+
+def valores_unicos(valores):
+    resultado = []
+    vistos = set()
+
+    for valor in valores:
+        texto = str(valor).strip()
+        clave = texto.casefold()
+        if texto and clave not in vistos:
+            vistos.add(clave)
+            resultado.append(texto)
+
+    return resultado
+
+
+def variantes_examen(examen: str) -> list[str]:
+    examen = str(examen).strip()
+    variantes = [examen]
+
+    if examen.isdigit():
+        variantes.append(f"Examen {int(examen)}")
+
+    return valores_unicos(variantes)
+
+
+def variantes_seccion(seccion: str) -> list[str]:
+    seccion = str(seccion).strip()
+    variantes = [seccion]
+
+    config = SECTION_CONFIG.get(seccion)
+    if config:
+        variantes.extend(config["aliases"])
+
+    if seccion.isdigit():
+        variantes.append(f"Sección {int(seccion)}")
+
+    return valores_unicos(variantes)
+
+
+def variantes_pregunta(pregunta: str) -> list[str]:
+    pregunta = str(pregunta).strip()
+    variantes = [pregunta]
+
+    if pregunta.isdigit():
+        variantes.append(str(int(pregunta)))
+        variantes.append(f"Pregunta {int(pregunta)}")
+
+    return valores_unicos(variantes)
+
+
+def ids_candidatas(examen: str, seccion: str, pregunta: str) -> list[str]:
+    """
+    Genera varias ID posibles para tolerar valores como:
+      1 / Examen 1
+      1 / Sección 1 / Lectura
+      1 / Pregunta 1
+    """
+    combinaciones = product(
+        variantes_examen(examen),
+        variantes_seccion(seccion),
+        variantes_pregunta(pregunta),
+    )
+
+    return valores_unicos(
+        crear_id(ex, sec, preg)
+        for ex, sec, preg in combinaciones
+    )
+
+
+def extraer_vectores(resultado) -> dict:
+    if isinstance(resultado, dict):
+        return resultado.get("vectors", {}) or {}
+
+    return getattr(resultado, "vectors", {}) or {}
+
+
+def extraer_metadata(registro) -> dict:
+    if isinstance(registro, dict):
+        return registro.get("metadata", {}) or {}
+
+    return getattr(registro, "metadata", {}) or {}
+
+
+def buscar_pregunta(
+    examen: str,
+    seccion: str,
+    pregunta: str,
+) -> tuple[dict | None, str | None]:
+    """
+    Recupera el registro exacto mediante fetch dentro del namespace utilizado
+    por Ocelote. No genera embeddings y no llama a OpenAI.
+    """
+    candidatas = ids_candidatas(examen, seccion, pregunta)
+
+    resultado = index.fetch(
+        ids=candidatas,
+        namespace=PINECONE_NAMESPACE,
+    )
+    vectores = extraer_vectores(resultado)
+
+    for vector_id in candidatas:
+        registro = vectores.get(vector_id)
+        if registro is not None:
+            return extraer_metadata(registro), vector_id
+
+    return None, None
+
+
+def obtener_url_imagen(metadata: dict) -> str | None:
+    imagen_url = str(metadata.get("imagen_url") or "").strip()
+
+    if imagen_url:
+        parsed = urlparse(imagen_url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return imagen_url
+
+    imagen_archivo = str(metadata.get("imagen_archivo") or "").strip()
+
+    if not imagen_archivo:
+        return None
+
+    ruta = imagen_archivo.replace("\\", "/").lstrip("/")
+
+    if ruta.startswith("static/"):
+        ruta = ruta[len("static/"):]
+
+    return url_for("static", filename=ruta)
+
+
+# ---------------------------------------------------------------------------
+# Interfaz
+# ---------------------------------------------------------------------------
+
+HTML = r'''<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Asesore Qualificato</title>
+
   <style>
-    body{max-width:720px;margin:2rem auto;font:18px/1.4 sans-serif;color:#222;}
-    h1{text-align:center;margin-bottom:1.2rem;}
-    form{display:flex;flex-direction:column;gap:1rem;}
-    .inline-selects{display:flex;gap:1rem;}
-    .select-group{display:flex;flex-direction:column;flex:1;}
-    .select-label{font-size:0.9rem;color:#666;text-align:left;margin-bottom:0.2rem;}
-    textarea,select,button,input[type=file]{font-size:1rem;padding:0.6rem;}
-    select{width:100%;}
-    button{background:#1450b4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
-    button:hover{background:#0e3c86;}
-    #loader{margin-top:1rem;font-style:italic;display:none;}
-    .answer{margin-top:1.5rem;padding:1rem;background:#f9f9f9;border-left:4px solid #1450b4;}
-    footer{margin-top:2rem;text-align:center;color:#666;font-size:0.9rem;}
+    body {
+      max-width: 760px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font: 18px/1.45 sans-serif;
+      color: #222;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .inline-selects {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .select-group {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+    }
+
+    .select-label {
+      margin-bottom: 0.25rem;
+      color: #666;
+      font-size: 0.9rem;
+    }
+
+    select,
+    button {
+      width: 100%;
+      padding: 0.65rem;
+      font-size: 1rem;
+    }
+
+    button {
+      border: none;
+      border-radius: 4px;
+      background: #1450b4;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0e3c86;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+
+    #loader {
+      display: none;
+      margin-top: 1rem;
+      font-style: italic;
+    }
+
+    .answer {
+      min-height: 1rem;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      border-left: 4px solid #1450b4;
+      background: #f9f9f9;
+    }
+
+    .answer-section {
+      margin-bottom: 1.25rem;
+    }
+
+    .answer-text {
+      white-space: pre-wrap;
+    }
+
+    .answer-image {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 1rem auto 0;
+      border-radius: 6px;
+    }
+
+    .error {
+      color: #9f1d1d;
+    }
+
+    footer {
+      margin-top: 2rem;
+      color: #666;
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 680px) {
+      .inline-selects {
+        flex-direction: column;
+      }
+    }
   </style>
+
   <script>
     window.MathJax = {
       tex: {
-        inlineMath: [['$','$'], ['\\(','\\)']],
-        displayMath: [['$$','$$'], ['\\[','\\]']]
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']]
       },
       svg: { fontCache: 'global' }
     };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"
+    async>
+  </script>
 </head>
+
 <body>
-  <h1>Asesore Qualificato: tu tutore matemático 🤌</h1>
+  <h1>Asesore Qualificato 🤌</h1>
+
   <form id="qform">
-    <textarea name="texto" rows="3" placeholder="Escribe tu pregunta aquí"></textarea>
-    <label>— o selecciona tu pregunta:</label>
     <div class="inline-selects">
       <div class="select-group">
-        <label class="select-label">Examen</label>
-        <select name="examen">
-          <option value="">Examen</option>
+        <label class="select-label" for="examen">Examen</label>
+        <select id="examen" name="examen" required>
+          <option value="">Selecciona un examen</option>
           {% for num, status in exam_config.items()|sort %}
-            {% if status == 'on' %}
-              <option value="{{ num }}">{{ num }}</option>
+            {% if status == "on" %}
+              <option value="{{ num }}">Examen {{ num }}</option>
             {% endif %}
           {% endfor %}
         </select>
       </div>
+
       <div class="select-group">
-        <label class="select-label">Sección</label>
-        <select name="seccion">
-          <option value="">Sección</option>
-          {% for opt in section_options %}
-            <option value="{{ opt }}">{{ opt }}</option>
+        <label class="select-label" for="seccion">Sección</label>
+        <select id="seccion" name="seccion" required>
+          <option value="">Selecciona una sección</option>
+          {% for value, config in section_config.items() %}
+            <option value="{{ value }}">{{ config.label }}</option>
           {% endfor %}
         </select>
       </div>
+
       <div class="select-group">
-        <label class="select-label">Pregunta</label>
-        <select name="pregunta">
-          <option value="">Pregunta</option>
+        <label class="select-label" for="pregunta">Pregunta</label>
+        <select id="pregunta" name="pregunta" required disabled>
+          <option value="">Selecciona una pregunta</option>
         </select>
       </div>
     </div>
-    <label>— o sube una imagen:</label>
-    <input type="file" name="image">
-    <button type="submit">Enviar</button>
+
+    <button id="submitButton" type="submit">Enviar</button>
   </form>
-  <div id="loader">⌛ Creando la mejor respuesta</div>
+
+  <div id="loader">⌛ Buscando la respuesta...</div>
   <div class="answer" id="answer"></div>
-  <footer>Asesor Bebé • Demo Flask + OpenAI + Pinecone</footer>
+
+  <footer>Consulta exacta en Pinecone</footer>
+
   <script>
-    const form      = document.getElementById('qform'),
-          loader    = document.getElementById('loader'),
-          ansDiv    = document.getElementById('answer'),
-          textoEl   = form.elements['texto'],
-          examenEl  = form.elements['examen'],
-          seccionEl = form.elements['seccion'],
-          pregEl    = form.elements['pregunta'],
-          imageEl   = form.elements['image'];
-    const preguntaLimits = {
-      'Lectura':     45,
-      'Redacción':   25,
-      'Matemáticas': 55,
-      'Variable':    25
-    };
-    textoEl.addEventListener('input', () => {
-      const hasText = textoEl.value.trim().length > 0;
-      [examenEl,seccionEl,pregEl,imageEl].forEach(el => {
-        el.disabled = hasText; if(hasText) el.value = '';
-      });
-      seccionEl.required = false; pregEl.required = false;
-    });
-    examenEl.addEventListener('change', () => {
-      const hasExam = examenEl.value !== '';
-      textoEl.disabled = hasExam; imageEl.disabled = hasExam;
-      seccionEl.required = hasExam; pregEl.required = hasExam;
-      if(hasExam){ textoEl.value=''; imageEl.value=null; }
-      else{ seccionEl.value=''; pregEl.value=''; }
-    });
+    const form = document.getElementById('qform');
+    const seccionEl = document.getElementById('seccion');
+    const preguntaEl = document.getElementById('pregunta');
+    const loader = document.getElementById('loader');
+    const answer = document.getElementById('answer');
+    const submitButton = document.getElementById('submitButton');
+
+    const preguntaLimits = {{ pregunta_limits | tojson }};
+
     seccionEl.addEventListener('change', () => {
-      const limit = preguntaLimits[seccionEl.value]||0;
-      pregEl.innerHTML = '<option value="">Pregunta</option>';
-      for(let i=1;i<=limit;i++){
-        const opt = document.createElement('option');
-        opt.value=i; opt.textContent=i; pregEl.appendChild(opt);
+      const limit = Number(preguntaLimits[seccionEl.value] || 0);
+
+      preguntaEl.innerHTML =
+        '<option value="">Selecciona una pregunta</option>';
+
+      for (let i = 1; i <= limit; i += 1) {
+        const option = document.createElement('option');
+        option.value = String(i);
+        option.textContent = `Pregunta ${i}`;
+        preguntaEl.appendChild(option);
       }
+
+      preguntaEl.disabled = limit === 0;
     });
-    form.addEventListener('submit', async e => {
-      e.preventDefault(); ansDiv.innerHTML='';
-      const textoVal    = textoEl.value.trim(),
-            examenVal   = examenEl.value,
-            seccionVal  = seccionEl.value,
-            preguntaNum = pregEl.value,
-            hasImage    = imageEl.files.length>0,
-            isTextOnly  = textoVal&&!examenVal&&!seccionVal&&!preguntaNum&&!hasImage;
-      if(examenVal&&(!seccionVal||!preguntaNum)){
-        ansDiv.textContent="Cuando seleccionas examen, debes elegir sección y pregunta.";
-        return;
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+
+      answer.innerHTML = '';
+      loader.style.display = 'block';
+      submitButton.disabled = true;
+
+      try {
+        const response = await fetch('/preguntar', {
+          method: 'POST',
+          body: new FormData(form)
+        });
+
+        const body = await response.text();
+
+        if (!response.ok) {
+          answer.innerHTML = `<p class="error">${body}</p>`;
+          return;
+        }
+
+        answer.innerHTML = body;
+
+        if (window.MathJax && window.MathJax.typesetPromise) {
+          await window.MathJax.typesetPromise([answer]);
+        }
+      } catch (error) {
+        answer.innerHTML =
+          '<p class="error">No fue posible comunicarse con el servidor.</p>';
+      } finally {
+        loader.style.display = 'none';
+        submitButton.disabled = false;
       }
-      loader.textContent = isTextOnly
-        ? '⌛ Resolviendo tu pregunta'
-        : '⌛ Creando la mejor respuesta';
-      loader.style.display='block';
-      let dots=0;
-      const iv = setInterval(()=>{
-        dots=(dots+1)%4;
-        loader.textContent=loader.textContent.split('.')[0]+'.'.repeat(dots);
-      },500);
-      const resp = await fetch('/preguntar',{method:'POST',body:new FormData(form)});
-      clearInterval(iv); loader.style.display='none';
-      const body = await resp.text();
-      if(!resp.ok) ansDiv.textContent=body;
-      else { ansDiv.innerHTML=body; MathJax.typeset(); }
     });
   </script>
 </body>
 </html>'''
 
-# ─── 3) Home route ───────────────────────────────────────────────────────
-@app.route('/', methods=['GET'])
+
+ANSWER_FRAGMENT = r'''
+<div class="answer-section">
+  <p>
+    <strong>Examen:</strong> {{ metadata.get("examen", examen) }}<br>
+    <strong>Sección:</strong> {{ metadata.get("seccion", seccion) }}<br>
+    <strong>Pregunta:</strong> {{ metadata.get("pregunta", pregunta) }}
+  </p>
+</div>
+
+{% if metadata.get("enunciado") %}
+  <div class="answer-section">
+    <strong>Enunciado</strong>
+    <div class="answer-text">{{ metadata.get("enunciado") }}</div>
+  </div>
+{% endif %}
+
+{% if metadata.get("opciones") %}
+  <div class="answer-section">
+    <strong>Opciones</strong>
+    <div class="answer-text">{{ metadata.get("opciones") }}</div>
+  </div>
+{% endif %}
+
+{% if metadata.get("respuesta") %}
+  <div class="answer-section">
+    <strong>Respuesta</strong>
+    <div class="answer-text">{{ metadata.get("respuesta") }}</div>
+  </div>
+{% endif %}
+
+{% if metadata.get("explicacion") %}
+  <div class="answer-section">
+    <strong>Explicación</strong>
+    <div class="answer-text">{{ metadata.get("explicacion") }}</div>
+  </div>
+{% endif %}
+
+{% if imagen_url %}
+  <div class="answer-section">
+    <img
+      class="answer-image"
+      src="{{ imagen_url }}"
+      alt="Imagen explicativa de la pregunta">
+  </div>
+{% endif %}
+'''
+
+
+# ---------------------------------------------------------------------------
+# Rutas
+# ---------------------------------------------------------------------------
+
+@app.route("/", methods=["GET"])
 def home():
-    return render_template_string(HTML,
-        exam_config     = EXAM_CONFIG,
-        section_options = SECTION_OPTIONS
+    pregunta_limits = {
+        key: config["limit"]
+        for key, config in SECTION_CONFIG.items()
+    }
+
+    return render_template_string(
+        HTML,
+        exam_config=EXAM_CONFIG,
+        section_config=SECTION_CONFIG,
+        pregunta_limits=pregunta_limits,
     )
 
-# ─── 4) Handle question ──────────────────────────────────────────────────
-@app.route('/preguntar', methods=['POST'])
+
+@app.route("/preguntar", methods=["POST"])
 def preguntar():
-    texto        = (request.form.get('texto') or "").strip()
-    examen       = request.form.get('examen')
-    seccion      = request.form.get('seccion')
-    pregunta_num = request.form.get('pregunta')
-    image_file   = request.files.get('image')
+    examen = str(request.form.get("examen") or "").strip()
+    seccion = str(request.form.get("seccion") or "").strip()
+    pregunta_num = str(request.form.get("pregunta") or "").strip()
 
-    # block mixed inputs
-    if texto and (examen or seccion or pregunta_num or image_file):
-        return ("Si escribes tu pregunta, no puedes usar “Examen”, “Sección”, "
-                "“Pregunta” ni subir imagen al mismo tiempo."), 400
+    if not examen or not seccion or not pregunta_num:
+        return "Debes seleccionar el examen, la sección y la pregunta.", 400
 
-    # require at least one input
-    if not (texto or examen or seccion or pregunta_num or image_file):
-        return ("Proporciona texto, selecciona examen/sección/pregunta o sube una imagen."), 400
-
-    # if exam-based lookup, require section & question
-    if examen and not (seccion and pregunta_num):
-        return "Cuando seleccionas examen, debes elegir sección y pregunta.", 400
-
-    # 4a) Exact-match lookup by metadata
-    snippet = None
-    if examen and seccion and pregunta_num:
-        try:
-            pine = index.query(
-                vector=DUMMY_VECTOR,
-                top_k=1,
-                include_metadata=True,
-                filter={
-                    "exam":     int(examen),
-                    "section":  seccion,
-                    "question": int(pregunta_num)
-                }
-            )
-            if pine.matches:
-                meta    = pine.matches[0].metadata
-                snippet = meta.get("text") or meta.get("answer")
-        except Exception:
-            snippet = None
-
-    # 4b) If exact-match found, wrap & generate concise explanation
-    if snippet:
-        clean = snippet.strip('$')
-        system_prompt = (
-            "Eres un profesor de matemáticas que explica de forma muy concisa "
-            "en español, en no más de 5 pasos numerados, usando delimitadores "
-            "$…$ para las expresiones matemáticas."
+    try:
+        metadata, _vector_id = buscar_pregunta(
+            examen=examen,
+            seccion=seccion,
+            pregunta=pregunta_num,
         )
-        context = texto or f"Examen {examen}, Sección {seccion}, Pregunta {pregunta_num}"
-        user_prompt = (
-            f"Ecuación: {context}\\n"
-            f"Respuesta: ${clean}$\\n\\n"
-            "Proporciona una lista numerada (1–5) de los pasos clave "
-            "para completar el cuadrado rápidamente."
+    except Exception:
+        app.logger.exception("Error consultando Pinecone")
+        return (
+            "No fue posible consultar Pinecone. "
+            "Revisa el índice, el namespace y la API key.",
+            500,
         )
-        chat = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role":"system","content":system_prompt},
-                {"role":"user","content":user_prompt}
-            ]
+
+    if metadata is None:
+        return (
+            "No se encontró esa combinación de examen, sección y pregunta "
+            "en el índice.",
+            404,
         )
-        formatted_list = (
-            f"<ol><li>${clean}$</li></ol>"
-            f"<p><strong>Pasos rápidos:</strong></p>"
-            + chat.choices[0].message.content.strip()
+
+    if not metadata.get("respuesta") and not metadata.get("explicacion"):
+        return (
+            "El registro existe, pero no contiene respuesta ni explicación.",
+            500,
         )
-    else:
-        # 4c) Fallback: embedding & similarity
-        try:
-            if image_file and not texto:
-                img_bytes = image_file.read()
-                emb = client.embeddings.create(
-                    model="image-embedding-001",
-                    input=base64.b64encode(img_bytes).decode()
-                )
-            else:
-                emb = client.embeddings.create(
-                    model="text-embedding-3-small",
-                    input=texto
-                )
-            vector = emb.data[0].embedding
-            pine = index.query(
-                vector=vector,
-                top_k=5,
-                include_metadata=True
-            )
-            raw_steps = [
-                m.metadata.get('text') or m.metadata.get('answer')
-                for m in pine.matches
-                if m.metadata.get('text') or m.metadata.get('answer')
-            ]
-        except Exception:
-            raw_steps = []
 
-        if not raw_steps:
-            try:
-                wiki = requests.get(
-                    'https://es.wikipedia.org/api/rest_v1/page/random/summary',
-                    timeout=5
-                ).json()
-                raw_steps = [wiki.get('extract','Lo siento, nada')]
-            except:
-                return 'No hay datos en Pinecone y falló la búsqueda aleatoria.', 500
+    imagen_url = obtener_url_imagen(metadata)
 
-        format_msg = (
-            'Eres un formateador HTML muy estricto. Toma estas frases y devuélvelas '
-            'como una lista ordenada (<ol><li>…</li></ol>) en español, sin texto '
-            'adicional. Usa siempre los delimitadores LaTeX $…$ para las fórmulas.\\n\\n'
-            + '\\n'.join(f'- {s}' for s in raw_steps)
-        )
-        try:
-            chat = client.chat.completions.create(
-                model='gpt-4o-mini',
-                messages=[
-                    {'role':'system','content':format_msg},
-                    {'role':'user','content':'Por favor formatea la lista.'}
-                ]
-            )
-            formatted_list = chat.choices[0].message.content.strip()
-        except Exception as e:
-            return f'Error de formateo: {e}', 500
-
-    # ─── Post-processing: ya sin envoltorios extra ──────────────────────────
-    # (No llamamos a wrap_tex ni reemplazamos delimitadores aquí)
-
-    # 4f) Return response
-    formatted_list = formatted_list.replace('</li>', '</li><br><br>')
-    response_fragment = (
-        f"<p><strong>Enunciado:</strong> {texto}</p>"
-        f"<p><strong>Examen:</strong> {examen}</p>"
-        f"<p><strong>Sección:</strong> {seccion}</p>"
-        f"<p><strong>Pregunta nº:</strong> {pregunta_num}</p>"
-        f"{formatted_list} 🤌"
+    return render_template_string(
+        ANSWER_FRAGMENT,
+        metadata=metadata,
+        imagen_url=imagen_url,
+        examen=examen,
+        seccion=seccion,
+        pregunta=pregunta_num,
     )
-    return response_fragment
 
-# ─── 5) Run server ───────────────────────────────────────────────────────
-if __name__ == '__main__':
+
+# ---------------------------------------------------------------------------
+# Ejecución local
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
     app.run(
-        host='0.0.0.0',
-        port=int(os.getenv('PORT', '8000')),
-        debug=False
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        debug=False,
     )
