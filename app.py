@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 from itertools import product
 from urllib.parse import urlparse
 
@@ -374,25 +375,59 @@ def buscar_pregunta(
     return None, None
 
 
-def obtener_url_imagen(metadata: dict) -> str | None:
-    imagen_url = str(metadata.get("imagen_url") or "").strip()
+def dividir_referencias_imagenes(texto: str) -> list[str]:
+    if not texto:
+        return []
 
-    if imagen_url:
-        parsed = urlparse(imagen_url)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return imagen_url
+    partes = re.split(r"[\n|]+", str(texto))
+    return [parte.strip() for parte in partes if parte.strip()]
 
-    imagen_archivo = str(metadata.get("imagen_archivo") or "").strip()
 
-    if not imagen_archivo:
-        return None
+def es_url_directa(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
-    ruta = imagen_archivo.replace("\\", "/").lstrip("/")
 
-    if ruta.startswith("static/"):
-        ruta = ruta[len("static/"):]
+def obtener_urls_imagenes(metadata: dict) -> list[str]:
+    urls = []
 
-    return url_for("static", filename=ruta)
+    # Opción principal:
+    # Una o varias URL en la columna imagen_url, separadas por salto de línea o por |
+    for referencia in dividir_referencias_imagenes(metadata.get("imagen_url", "")):
+        if es_url_directa(referencia):
+            urls.append(referencia)
+
+    # Compatibilidad opcional: imagen_url_1, imagen_url_2, imagen_url_3...
+    for key in sorted(metadata.keys()):
+        if re.fullmatch(r"imagen_url_\d+", str(key)):
+            referencia = str(metadata.get(key) or "").strip()
+            if referencia and es_url_directa(referencia):
+                urls.append(referencia)
+
+    # Opción local:
+    # Una o varias imágenes dentro de static/, separadas por salto de línea o por |
+    for referencia in dividir_referencias_imagenes(metadata.get("imagen_archivo", "")):
+        ruta = referencia.replace("\\", "/").lstrip("/")
+
+        if ruta.startswith("static/"):
+            ruta = ruta[len("static/"):]
+
+        if ruta:
+            urls.append(url_for("static", filename=ruta))
+
+    # Compatibilidad opcional: imagen_archivo_1, imagen_archivo_2...
+    for key in sorted(metadata.keys()):
+        if re.fullmatch(r"imagen_archivo_\d+", str(key)):
+            referencia = str(metadata.get(key) or "").strip()
+            if referencia:
+                ruta = referencia.replace("\\", "/").lstrip("/")
+
+                if ruta.startswith("static/"):
+                    ruta = ruta[len("static/"):]
+
+                urls.append(url_for("static", filename=ruta))
+
+    return valores_unicos(urls)
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +606,6 @@ HTML = r'''<!doctype html>
   <div id="loader">⌛ Buscando la respuesta...</div>
   <div class="answer" id="answer"></div>
 
-  <footer>Consulta exacta en Pinecone</footer>
 
   <script>
     const form = document.getElementById('qform');
@@ -638,14 +672,6 @@ HTML = r'''<!doctype html>
 
 
 ANSWER_FRAGMENT = r'''
-<div class="answer-section">
-  <p>
-    <strong>Examen:</strong> {{ metadata.get("examen", examen) }}<br>
-    <strong>Sección:</strong> {{ metadata.get("seccion", seccion) }}<br>
-    <strong>Pregunta:</strong> {{ metadata.get("pregunta", pregunta) }}
-  </p>
-</div>
-
 {% if metadata.get("enunciado") %}
   <div class="answer-section">
     <strong>Enunciado</strong>
@@ -674,14 +700,14 @@ ANSWER_FRAGMENT = r'''
   </div>
 {% endif %}
 
-{% if imagen_url %}
+{% for imagen_url in imagenes_url %}
   <div class="answer-section">
     <img
       class="answer-image"
       src="{{ imagen_url }}"
-      alt="Imagen explicativa de la pregunta">
+      alt="Imagen explicativa {{ loop.index }}">
   </div>
-{% endif %}
+{% endfor %}
 '''
 
 
@@ -740,15 +766,12 @@ def preguntar():
             500,
         )
 
-    imagen_url = obtener_url_imagen(metadata)
+    imagenes_url = obtener_urls_imagenes(metadata)
 
     return render_template_string(
         ANSWER_FRAGMENT,
         metadata=metadata,
-        imagen_url=imagen_url,
-        examen=examen,
-        seccion=seccion,
-        pregunta=pregunta_num,
+        imagenes_url=imagenes_url,
     )
 
 
